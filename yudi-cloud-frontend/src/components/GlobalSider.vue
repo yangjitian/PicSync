@@ -159,10 +159,6 @@ window.refreshTeamSpaceMenu = handleMenuRefresh
 onMounted(() => {
   window.addEventListener('refreshTeamSpaceMenu', handleMenuRefresh)
   
-  // 测试事件监听器是否正常工作
-  setTimeout(() => {
-    window.dispatchEvent(new CustomEvent('refreshTeamSpaceMenu'))
-  }, 1000)
 })
 
 onUnmounted(() => {

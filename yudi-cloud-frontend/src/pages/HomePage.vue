@@ -19,7 +19,9 @@
       </a-space>
     </div>
     <!-- 图片列表 -->
-    <PictureList :dataList="dataList" :loading="loading && searchParams.current === 1" />
+    <div class="picture-list-container">
+      <PictureList :dataList="dataList" :loading="loading && searchParams.current === 1" layoutMode="detailed" />
+    </div>
     <!-- 加载更多提示 -->
     <div v-if="loading && searchParams.current > 1" style="text-align: center; padding: 20px;">
       <a-spin tip="加载中..." />
@@ -185,5 +187,11 @@ onBeforeUnmount(() => {
 
 #homePage .tag-bar {
   margin-bottom: 16px;
+}
+
+.picture-list-container {
+  width: 100%;
+  min-height: 400px; /* 确保容器有足够的高度 */
+  margin-bottom: 20px; /* 为无限滚动留出空间 */
 }
 </style>

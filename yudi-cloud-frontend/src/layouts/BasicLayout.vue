@@ -2,11 +2,11 @@
   <div id="basicLayout">
     <a-layout style="min-height: 100vh">
       <!-- 浮动导航栏 -->
-      <div class="header-wrapper">
-        <a-layout-header
-          class="header"
-          :class="{ 'header-hidden': !isHeaderActuallyVisible }"
-        >
+      <div 
+        class="header-wrapper"
+        :class="{ 'header-hidden': !isHeaderActuallyVisible }"
+      >
+        <a-layout-header class="header">
           <GlobalHeader />
         </a-layout-header>
       </div>
@@ -60,26 +60,50 @@ const isHeaderActuallyVisible = computed(() => {
   return showHeader.value
 })
 
+// 防抖处理
+let scrollTimeout: number | null = null
+
 // 处理滚动事件
 const handleScroll = () => {
-  const currentScrollTop = window.pageYOffset || document.documentElement.scrollTop
-
-  // 向下滚动时隐藏导航栏，向上滚动时显示导航栏
-  if (currentScrollTop > lastScrollTop && currentScrollTop > 100) {
-    // 向下滚动超过100px时隐藏
-    showHeader.value = false
-  } else if (currentScrollTop < lastScrollTop) {
-    // 向上滚动时显示
-    showHeader.value = true
+  // 清除之前的定时器
+  if (scrollTimeout) {
+    clearTimeout(scrollTimeout)
   }
 
-  lastScrollTop = currentScrollTop
+  // 使用防抖，避免频繁触发
+  scrollTimeout = setTimeout(() => {
+    const currentScrollTop = window.pageYOffset || document.documentElement.scrollTop || document.body.scrollTop || 0
+
+    // 判断滚动方向
+    const scrollDelta = currentScrollTop - lastScrollTop
+    
+    if (currentScrollTop > 50) {
+      // 向下滚动超过50px时隐藏
+      if (scrollDelta > 0) {
+        showHeader.value = false
+      } else if (scrollDelta < 0) {
+        showHeader.value = true
+      }
+    } else {
+      // 在顶部区域时始终显示
+      showHeader.value = true
+    }
+
+    lastScrollTop = currentScrollTop
+  }, 10) // 10ms防抖
 }
+
 
 // 全局路由变化监听器，确保数据刷新
 onMounted(() => {
   // 添加滚动事件监听
-  window.addEventListener('scroll', handleScroll)
+  window.addEventListener('scroll', handleScroll, { passive: true })
+  
+  // 强制设置body样式，确保可以滚动
+  document.body.style.height = 'auto'
+  document.body.style.minHeight = '100vh'
+  document.documentElement.style.height = 'auto'
+  document.documentElement.style.minHeight = '100vh'
   
   // 添加侧边栏悬浮事件监听
   window.addEventListener('sidebar-hover-start', handleSidebarHoverStart)
@@ -125,14 +149,19 @@ onBeforeUnmount(() => {
   right: 0;
   height: 64px;
   z-index: 1000;
+  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* 导航栏隐藏状态 - 应用到包装器 */
+.header-wrapper.header-hidden {
+  transform: translateY(-64px);
 }
 
 /* 浮动导航栏样式 */
 #basicLayout .header {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
+  position: relative;
+  width: 100%;
+  height: 100%;
   padding-inline: 20px;
   background: rgba(255, 255, 255, 0.95);
   backdrop-filter: blur(10px);
@@ -140,18 +169,10 @@ onBeforeUnmount(() => {
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
   border-bottom: 1px solid rgba(255, 255, 255, 0.2);
   color: unset;
-  margin-bottom: 1px;
-  height: 64px;
   line-height: 64px;
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-  z-index: 1000;
+  z-index: 1001;
 }
 
-/* 导航栏隐藏状态 */
-.header-hidden {
-  transform: translateY(-64px);
-  box-shadow: none;
-}
 
 #basicLayout .sider {
   background: #fff;
@@ -169,9 +190,11 @@ onBeforeUnmount(() => {
 #basicLayout .content {
   padding: 28px;
   background: linear-gradient(to right, #fefefe, #fff);
-  margin-bottom: 28px;
+  margin-bottom: 80px; /* 为footer留出空间 */
   margin-top: 64px; /* 为浮动导航栏留出空间 */
   min-height: calc(100vh - 200px);
+  overflow: visible; /* 确保内容可以正常滚动 */
+  height: auto; /* 确保高度可以自动扩展 */
 }
 
 #basicLayout .footer {
@@ -182,7 +205,9 @@ onBeforeUnmount(() => {
   left: 0;
   right: 0;
   text-align: center;
+  z-index: 100; /* 确保footer在内容之上 */
 }
+
 
 /* 响应式设计 */
 @media screen and (max-width: 768px) {
@@ -190,14 +215,13 @@ onBeforeUnmount(() => {
     height: 48px;
   }
   
-  #basicLayout .header {
-    height: 48px;
-    line-height: 48px;
-    padding-inline: 16px;
+  .header-wrapper.header-hidden {
+    transform: translateY(-48px);
   }
   
-  .header-hidden {
-    transform: translateY(-48px);
+  #basicLayout .header {
+    line-height: 48px;
+    padding-inline: 16px;
   }
   
   #basicLayout .content {

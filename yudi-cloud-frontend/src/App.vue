@@ -25,3 +25,18 @@ import BasicLayout from '@/layouts/BasicLayout.vue'
 </script>
 
 <style scoped></style>
+
+<style>
+/* 全局样式，确保页面可以正常滚动 */
+html, body {
+  height: auto;
+  min-height: 100%;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+#app {
+  min-height: 100vh;
+  position: relative;
+}
+</style>

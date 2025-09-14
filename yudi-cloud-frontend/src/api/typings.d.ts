@@ -456,8 +456,12 @@ declare namespace API {
     thumbnailUrl?: string
     updateTime?: string
     url?: string
-    user?: UserVO
+    userVO?: UserVO
     userId?: number
+    viewCount?: number
+    likeCount?: number
+    collectCount?: number
+    shareCount?: number
   }
 
   type SearchPictureByColorRequest = {

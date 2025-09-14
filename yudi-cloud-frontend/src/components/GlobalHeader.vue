@@ -71,42 +71,46 @@ import { userLogoutUsingPost } from '@/api/userController.ts'
 
 const loginUserStore = useLoginUserStore()
 
-// 未经过滤的菜单项
-const originItems = [
-  {
-    key: '/',
-    icon: () => h(HomeOutlined),
-    label: '主页',
-    title: '主页',
-  },
-  // 管理员菜单项 - 使用下拉菜单
-  ...(loginUserStore.loginUser?.userRole === 'admin' ? [{
-    key: 'admin',
-    label: '管理',
-    title: '管理',
-    icon: () => h(SettingOutlined),
-    children: [
-      {
-        key: '/admin/userManage',
-        label: '用户管理',
-        title: '用户管理',
-      },
-      {
-        key: '/admin/pictureManage',
-        label: '图片管理',
-        title: '图片管理',
-      },
-      {
-        key: '/admin/spaceManage',
-        label: '空间管理',
-        title: '空间管理',
-      },
-    ]
-  }] : [])
-]
-
-// 展示在菜单的路由数组
-const items = computed(() => originItems)
+// 展示在菜单的路由数组 - 使用computed确保响应式更新
+const items = computed(() => {
+  const baseItems: any[] = [
+    {
+      key: '/',
+      icon: () => h(HomeOutlined),
+      label: '主页',
+      title: '主页',
+    }
+  ]
+  
+  // 管理员菜单项 - 使用下拉菜单，响应式检查用户角色
+  if (loginUserStore.loginUser?.userRole === 'admin') {
+    baseItems.push({
+      key: 'admin',
+      label: '管理',
+      title: '管理',
+      icon: () => h(SettingOutlined),
+      children: [
+        {
+          key: '/admin/userManage',
+          label: '用户管理',
+          title: '用户管理',
+        },
+        {
+          key: '/admin/pictureManage',
+          label: '图片管理',
+          title: '图片管理',
+        },
+        {
+          key: '/admin/spaceManage',
+          label: '空间管理',
+          title: '空间管理',
+        },
+      ]
+    })
+  }
+  
+  return baseItems
+})
 
 const router = useRouter()
 // 当前要高亮的菜单项

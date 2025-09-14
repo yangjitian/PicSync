@@ -311,10 +311,6 @@ onMounted(() => {
   
   // 确保事件监听器在全局范围内可用
   
-  // 测试事件监听器是否正常工作
-  setTimeout(() => {
-    window.dispatchEvent(new CustomEvent('refreshTeamSpaceMenu'))
-  }, 1000)
 })
 
 onUnmounted(() => {
@@ -444,10 +440,6 @@ const doMenuClick = ({ key }: { key: string }) => {
   height: calc(100vh - 64px); /* 从导航栏下方到屏幕底部 */
   display: flex;
   align-items: center;
-  /* 调试样式 - 确保容器可见 */
-  opacity: 1 !important;
-  visibility: visible !important;
-  display: flex !important;
 }
 
 .sidebar-trigger {
@@ -468,10 +460,6 @@ const doMenuClick = ({ key }: { key: string }) => {
   z-index: 998;
   border: 2px solid rgba(255, 255, 255, 0.2);
   will-change: transform, left;
-  /* 调试样式 - 确保按钮可见 */
-  opacity: 1 !important;
-  visibility: visible !important;
-  display: flex !important;
 }
 
 .sidebar-trigger:hover {
