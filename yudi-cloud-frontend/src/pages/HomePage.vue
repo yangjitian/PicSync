@@ -1,15 +1,5 @@
 <template>
   <div id="homePage">
-    <!-- 搜索框 -->
-    <div class="search-bar">
-      <a-input-search
-        v-model:value="searchParams.searchText"
-        placeholder="从海量图片中搜索"
-        enter-button="搜索"
-        size="large"
-        @search="doSearch"
-      />
-    </div>
     <!-- 分类和标签筛选 -->
     <a-tabs v-model:active-key="selectedCategory" @change="doSearch">
       <a-tab-pane key="all" tab="全部" />
@@ -41,13 +31,16 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, onBeforeUnmount, reactive, ref } from 'vue'
+import { onMounted, onBeforeUnmount, reactive, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import {
   listPictureTagCategoryUsingGet,
   listPictureVoByPageUsingPost,
 } from '@/api/pictureController.ts'
 import { message } from 'ant-design-vue'
 import PictureList from '@/components/PictureList.vue'
+
+const route = useRoute()
 
 // --- 核心数据和状态 ---
 const dataList = ref<API.PictureVO[]>([])
@@ -159,6 +152,18 @@ const setupObserver = () => {
   }
 }
 
+// --- 监听查询参数变化 ---
+watch(
+  () => route.query.searchText,
+  (newSearchText) => {
+    if (newSearchText && typeof newSearchText === 'string') {
+      searchParams.searchText = newSearchText
+      doSearch()
+    }
+  },
+  { immediate: true }
+)
+
 // --- 生命周期钩子 ---
 onMounted(() => {
   getTagCategoryOptions()
@@ -176,11 +181,6 @@ onBeforeUnmount(() => {
 <style scoped>
 #homePage {
   margin-bottom: 16px;
-}
-
-#homePage .search-bar {
-  max-width: 480px;
-  margin: 0 auto 16px;
 }
 
 #homePage .tag-bar {
