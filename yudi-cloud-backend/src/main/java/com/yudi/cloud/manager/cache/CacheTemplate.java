@@ -61,6 +61,59 @@ public abstract class CacheTemplate<T> {
     }
 
     /**
+     * 获取缓存数据（仅从缓存中获取，不执行数据查询）
+     */
+    public T get(String cacheKey) {
+        // 1. 查询本地缓存
+        String localData = localCache.getIfPresent(cacheKey);
+        if (localData != null) {
+            return JSONUtil.toBean(localData, getTargetType());
+        }
+
+        // 2. 查询Redis缓存
+        ValueOperations<String, String> valueOps = stringRedisTemplate.opsForValue();
+        String redisData = valueOps.get(cacheKey);
+        if (redisData != null) {
+            localCache.put(cacheKey, redisData);
+            return JSONUtil.toBean(redisData, getTargetType());
+        }
+
+        return null;
+    }
+
+    /**
+     * 设置缓存数据
+     */
+    public void set(String cacheKey, T data, long expireTimeSeconds) {
+        String cacheValue = JSONUtil.toJsonStr(data);
+        
+        // 更新本地缓存
+        localCache.put(cacheKey, cacheValue);
+        
+        // 更新Redis缓存
+        ValueOperations<String, String> valueOps = stringRedisTemplate.opsForValue();
+        valueOps.set(cacheKey, cacheValue, expireTimeSeconds, TimeUnit.SECONDS);
+    }
+
+    /**
+     * 设置缓存数据（使用默认过期时间5分钟）
+     */
+    public void set(String cacheKey, T data) {
+        set(cacheKey, data, 300);
+    }
+
+    /**
+     * 删除缓存
+     */
+    public void delete(String cacheKey) {
+        // 删除本地缓存
+        localCache.invalidate(cacheKey);
+        
+        // 删除Redis缓存
+        stringRedisTemplate.delete(cacheKey);
+    }
+
+    /**
      * 获取目标类型Class
      */
     protected abstract Class<T> getTargetType();

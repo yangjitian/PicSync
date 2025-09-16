@@ -115,6 +115,33 @@ public class PictureVO implements Serializable {
      */
     private List<String> permissionList = new ArrayList<>();
 
+    /**
+     * 浏览量
+     */
+    private Long viewCount;
+
+    /**
+     * 点赞量
+     */
+    private Long likeCount;
+
+    /**
+     * 收藏量
+     */
+    private Long collectCount;
+
+    /**
+     * 分享量
+     */
+    private Long shareCount;
+
+    /**
+     * 分享量显示控制
+     * true: 显示具体数字
+     * false: 模糊显示或不显示
+     */
+    private Boolean showShareCount;
+
     private static final long serialVersionUID = -5816665651201304852L;
 
     /**

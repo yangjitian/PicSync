@@ -125,6 +125,25 @@ public class Picture implements Serializable {
      */
     private Date reviewTime;
 
+    /**
+     * 浏览量
+     */
+    private Long viewCount;
+
+    /**
+     * 点赞量
+     */
+    private Long likeCount;
+
+    /**
+     * 收藏量
+     */
+    private Long collectCount;
+
+    /**
+     * 分享量
+     */
+    private Long shareCount;
 
     /**
      * 是否删除

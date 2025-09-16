@@ -18,6 +18,7 @@ import com.yudi.cloud.exception.ErrorCode;
 import com.yudi.cloud.exception.ThrowUtils;
 import com.yudi.cloud.manager.auth.StpKit;
 import com.yudi.cloud.manager.cache.UserCache;
+import com.yudi.cloud.manager.cache.UserEntityCache;
 import com.yudi.cloud.model.dto.user.ChangePasswordDTO;
 import com.yudi.cloud.model.dto.user.UserQueryDTO;
 import com.yudi.cloud.model.dto.user.UserUpdateDTO;
@@ -57,8 +58,11 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User>
     @Resource
     private UserCache userCache;
 
-    @Autowired
-    private StringRedisTemplate redisTemplate;
+    @Resource
+    private UserEntityCache userEntityCache;
+
+    @Resource
+    private StringRedisTemplate stringRedisTemplate;
 
     private static final String VERIFICATION_CODE_PREFIX = "verification:code:";
 
@@ -89,7 +93,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User>
         }
         
         // 验证邮箱验证码
-        String storedCode = redisTemplate.opsForValue().get(VERIFICATION_CODE_PREFIX + userAccount);
+        String storedCode = stringRedisTemplate.opsForValue().get(VERIFICATION_CODE_PREFIX + userAccount);
         if (StrUtil.isBlank(storedCode) || !storedCode.equals(verificationCode)) {
             throw new BusinessException(ErrorCode.PARAMETER_ERROR, "验证码错误或已过期");
         }
@@ -112,7 +116,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User>
         }
         
         // 注册成功后删除验证码
-        redisTemplate.delete(VERIFICATION_CODE_PREFIX + userAccount);
+        stringRedisTemplate.delete(VERIFICATION_CODE_PREFIX + userAccount);
         
         return user.getId();
     }
@@ -200,8 +204,21 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User>
         if (currentUser == null || currentUser.getId() == null) {
             throw new BusinessException(ErrorCode.NOT_LOGIN_ERROR);
         }
+        
+        // 使用缓存避免重复查询数据库
+        String cacheKey = "user:login:" + currentUser.getId();
+        User cachedUser = userEntityCache.get(cacheKey);
+        if (cachedUser != null) {
+            return cachedUser;
+        }
+        
+        // 缓存未命中，查询数据库
         currentUser = this.getById(currentUser.getId());
         ThrowUtils.throwIf(currentUser == null, ErrorCode.NOT_LOGIN_ERROR);
+        
+        // 缓存用户信息，缓存一天
+        userEntityCache.set(cacheKey, currentUser, 60 * 60 * 24);
+        
         return currentUser;
     }
 

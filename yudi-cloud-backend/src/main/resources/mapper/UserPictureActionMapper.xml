@@ -1,0 +1,124 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.yudi.cloud.mapper.UserPictureActionMapper">
+
+    <resultMap id="BaseResultMap" type="com.yudi.cloud.model.entity.UserPictureAction">
+        <id property="id" column="id" jdbcType="BIGINT"/>
+        <result property="userId" column="user_id" jdbcType="BIGINT"/>
+        <result property="pictureId" column="picture_id" jdbcType="BIGINT"/>
+        <result property="actionType" column="action_type" jdbcType="VARCHAR"/>
+        <result property="status" column="status" jdbcType="INTEGER"/>
+        <result property="createTime" column="create_time" jdbcType="TIMESTAMP"/>
+        <result property="updateTime" column="update_time" jdbcType="TIMESTAMP"/>
+    </resultMap>
+
+    <sql id="Base_Column_List">
+        id,user_id,picture_id,action_type,status,create_time,update_time
+    </sql>
+
+    <!-- 根据用户ID和图片ID查询特定行为记录 -->
+    <select id="selectByUserIdAndPictureIdAndActionType" resultMap="BaseResultMap">
+        SELECT
+        <include refid="Base_Column_List"/>
+        FROM user_picture_action
+        WHERE user_id = #{userId}
+        AND picture_id = #{pictureId}
+        AND action_type = #{actionType}
+        LIMIT 1
+    </select>
+
+    <!-- 批量查询用户对多个图片的行为状态 -->
+    <select id="selectUserActionsByPictureIds" resultMap="BaseResultMap">
+        SELECT
+        <include refid="Base_Column_List"/>
+        FROM user_picture_action
+        WHERE user_id = #{userId}
+        AND picture_id IN
+        <foreach collection="pictureIds" item="pictureId" open="(" separator="," close=")">
+            #{pictureId}
+        </foreach>
+        AND action_type IN ('LIKE', 'COLLECT')
+        AND status = 1
+    </select>
+
+    <!-- 统计图片的点赞数量 -->
+    <select id="countLikesByPictureId" resultType="java.lang.Long">
+        SELECT COUNT(*)
+        FROM user_picture_action
+        WHERE picture_id = #{pictureId}
+        AND action_type = 'LIKE'
+        AND status = 1
+    </select>
+
+    <!-- 统计图片的收藏数量 -->
+    <select id="countCollectsByPictureId" resultType="java.lang.Long">
+        SELECT COUNT(*)
+        FROM user_picture_action
+        WHERE picture_id = #{pictureId}
+        AND action_type = 'COLLECT'
+        AND status = 1
+    </select>
+
+    <!-- 统计图片的分享数量 -->
+    <select id="countSharesByPictureId" resultType="java.lang.Long">
+        SELECT COUNT(*)
+        FROM user_picture_action
+        WHERE picture_id = #{pictureId}
+        AND action_type = 'SHARE'
+        AND status = 1
+    </select>
+
+    <!-- 检查用户是否在今天浏览过该图片（从凌晨0点到23:59:59） -->
+    <select id="checkUserViewedIn24Hours" resultType="java.lang.Boolean">
+        SELECT COUNT(*) > 0
+        FROM user_picture_action
+        WHERE user_id = #{userId}
+        AND picture_id = #{pictureId}
+        AND action_type = 'VIEW'
+        AND status = 1
+        AND DATE(update_time) = CURDATE()
+    </select>
+
+    <!-- 检查用户是否曾经浏览过该图片（不限时间） -->
+    <select id="checkUserViewedBefore" resultType="java.lang.Boolean">
+        SELECT COUNT(*) > 0
+        FROM user_picture_action
+        WHERE user_id = #{userId}
+        AND picture_id = #{pictureId}
+        AND action_type = 'VIEW'
+        AND status = 1
+    </select>
+
+    <!-- 更新浏览记录的更新时间（跨天浏览时使用） -->
+    <update id="updateViewTime">
+        UPDATE user_picture_action
+        SET update_time = NOW()
+        WHERE user_id = #{userId}
+        AND picture_id = #{pictureId}
+        AND action_type = 'VIEW'
+        AND status = 1
+    </update>
+
+    <!-- 检查用户是否曾经分享过该图片（不限时间） -->
+    <select id="checkUserSharedBefore" resultType="java.lang.Boolean">
+        SELECT COUNT(*) > 0
+        FROM user_picture_action
+        WHERE user_id = #{userId}
+        AND picture_id = #{pictureId}
+        AND action_type = 'SHARE'
+        AND status = 1
+    </select>
+
+    <!-- 更新分享记录的更新时间 -->
+    <update id="updateShareTime">
+        UPDATE user_picture_action
+        SET update_time = NOW()
+        WHERE user_id = #{userId}
+        AND picture_id = #{pictureId}
+        AND action_type = 'SHARE'
+        AND status = 1
+    </update>
+
+</mapper>

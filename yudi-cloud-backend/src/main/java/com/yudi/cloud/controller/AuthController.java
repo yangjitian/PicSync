@@ -4,7 +4,6 @@ import cn.dev33.satoken.annotation.SaIgnore;
 import cn.hutool.crypto.digest.BCrypt;
 import com.yudi.cloud.common.BaseResponse;
 import com.yudi.cloud.common.Result;
-import com.yudi.cloud.exception.BusinessException;
 import com.yudi.cloud.exception.ErrorCode;
 import com.yudi.cloud.exception.ThrowUtils;
 import com.yudi.cloud.model.dto.auth.EmailRequest;
@@ -41,8 +40,8 @@ public class AuthController {
     @Resource
     private EmailService emailService;
 
-    @Autowired
-    private StringRedisTemplate redisTemplate;
+    @Resource
+    private StringRedisTemplate stringRedisTemplate;
 
     @SaIgnore
     @PostMapping("/send-verification-code")
@@ -64,7 +63,7 @@ public class AuthController {
 
         // 4. 存储到Redis，有效期5分钟
         try {
-            redisTemplate.opsForValue().set(VERIFICATION_CODE_PREFIX + email, code, 5, TimeUnit.MINUTES);
+            stringRedisTemplate.opsForValue().set(VERIFICATION_CODE_PREFIX + email, code, 5, TimeUnit.MINUTES);
             log.info("验证码已存储到Redis");
         } catch (Exception e) {
             log.error("Redis 存储验证码失败", e);
@@ -99,7 +98,7 @@ public class AuthController {
 
         // 4. 存储到Redis，有效期5分钟
         try {
-            redisTemplate.opsForValue().set(VERIFICATION_CODE_PREFIX + email, code, 5, TimeUnit.MINUTES);
+            stringRedisTemplate.opsForValue().set(VERIFICATION_CODE_PREFIX + email, code, 5, TimeUnit.MINUTES);
         } catch (Exception e) {
             log.error("Redis 存储验证码失败", e);
             ThrowUtils.throwIf(true, ErrorCode.SYSTEM_ERROR, "验证码发送失败，请稍后重试");
@@ -151,7 +150,7 @@ public class AuthController {
 
         // 4. 存储到Redis，有效期5分钟
         try {
-            redisTemplate.opsForValue().set(VERIFICATION_CODE_PREFIX + email, code, 5, TimeUnit.MINUTES);
+            stringRedisTemplate.opsForValue().set(VERIFICATION_CODE_PREFIX + email, code, 5, TimeUnit.MINUTES);
         } catch (Exception e) {
             log.error("Redis 存储验证码失败", e);
             ThrowUtils.throwIf(true, ErrorCode.SYSTEM_ERROR, "验证码发送失败，请稍后重试");
@@ -191,7 +190,7 @@ public class AuthController {
         // 5. 校验验证码
         String storedCode = null;
         try {
-            storedCode = redisTemplate.opsForValue().get(VERIFICATION_CODE_PREFIX + email);
+            storedCode = stringRedisTemplate.opsForValue().get(VERIFICATION_CODE_PREFIX + email);
         } catch (Exception e) {
             log.error("Redis 获取验证码失败", e);
             ThrowUtils.throwIf(true, ErrorCode.SYSTEM_ERROR, "验证码验证失败，请稍后重试");
@@ -210,7 +209,7 @@ public class AuthController {
             // 新密码与当前密码相同，跳过数据库更新，但删除验证码并返回成功
             log.info("用户 {} 输入的新密码与当前密码相同，跳过数据库更新", email);
             try {
-                redisTemplate.delete(VERIFICATION_CODE_PREFIX + email);
+                stringRedisTemplate.delete(VERIFICATION_CODE_PREFIX + email);
             } catch (Exception e) {
                 log.error("Redis 删除验证码失败", e);
             }
@@ -226,7 +225,7 @@ public class AuthController {
 
         // 9. 删除验证码（一次性使用）
         try {
-            redisTemplate.delete(VERIFICATION_CODE_PREFIX + email);
+            stringRedisTemplate.delete(VERIFICATION_CODE_PREFIX + email);
         } catch (Exception e) {
             log.error("Redis 删除验证码失败", e);
         }

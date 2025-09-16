@@ -123,3 +123,40 @@ ALTER TABLE user
 
 ALTER TABLE user
     ADD COLUMN birthday DATE NULL COMMENT '生日';
+
+
+--  用户图片互动行为表（点赞/收藏/分享）—— 允许重复分享
+CREATE TABLE IF NOT EXISTS user_picture_action
+(
+    id          BIGINT AUTO_INCREMENT COMMENT '主键' PRIMARY KEY,
+    user_id     BIGINT                             NOT NULL COMMENT '用户 id',
+    picture_id  BIGINT                             NOT NULL COMMENT '图片 id',
+    action_type ENUM ('VIEW', 'LIKE', 'COLLECT', 'SHARE') NOT NULL COMMENT '互动类型：浏览/点赞/收藏/分享',
+    status      TINYINT  DEFAULT 1                 NOT NULL COMMENT '状态：1=有效，0=取消（仅用于LIKE/FAVORITE）',
+    create_time DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL COMMENT '创建时间',
+    update_time DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+
+    --  为点赞和收藏添加唯一索引，防止重复操作
+    UNIQUE KEY uk_user_picture_like (user_id, picture_id, action_type) COMMENT '用户图片点赞/收藏唯一索引',
+    INDEX idx_picture_action (picture_id, action_type),
+    INDEX idx_user_action (user_id, action_type),
+    INDEX idx_user_time (user_id, create_time DESC),
+    INDEX idx_action_status (action_type, status)
+) COMMENT '用户图片互动行为表（浏览/点赞/收藏/分享）' COLLATE = utf8mb4_unicode_ci;
+
+--  确保图片表包含统计字段
+ALTER TABLE picture
+    ADD COLUMN  viewCount BIGINT DEFAULT 0 NOT NULL COMMENT '浏览量',
+    ADD COLUMN  likeCount BIGINT DEFAULT 0 NOT NULL COMMENT '点赞量',
+    ADD COLUMN  collectCount BIGINT DEFAULT 0 NOT NULL COMMENT '收藏量',
+    ADD COLUMN  shareCount BIGINT DEFAULT 0 NOT NULL COMMENT '分享量';
+
+--  为统计字段建立高效索引
+CREATE INDEX idx_likeCount ON picture (likeCount);
+CREATE INDEX idx_collectCount ON picture (collectCount);
+CREATE INDEX idx_shareCount ON picture (shareCount);
+CREATE INDEX idx_viewCount ON picture (viewCount);
+CREATE INDEX idx_hot_score ON picture (likeCount DESC, collectCount DESC, viewCount DESC);
+
+ALTER TABLE user_picture_action
+    ADD UNIQUE KEY uk_user_picture_like (user_id, picture_id, action_type) COMMENT '用户图片点赞/收藏唯一索引';

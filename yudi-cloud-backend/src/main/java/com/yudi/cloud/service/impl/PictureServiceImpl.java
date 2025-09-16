@@ -352,6 +352,10 @@ public class PictureServiceImpl extends ServiceImpl<PictureMapper, Picture>
             UserVO userVO = userService.getUserVO(user);
             pictureVO.setUserVO(userVO);
         }
+        
+        // 设置分享量显示控制
+        setShareCountDisplayControl(pictureVO, request);
+        
         return pictureVO;
     }
 
@@ -395,6 +399,10 @@ public class PictureServiceImpl extends ServiceImpl<PictureMapper, Picture>
             // 将User转换为UserVO并设置到PictureVO中
             // 注意：userService.getUserVO应能处理user为null的情况
             pictureVO.setUserVO(userService.getUserVO(user));
+            
+            // 设置分享量显示控制
+            setShareCountDisplayControl(pictureVO, request);
+            
             return pictureVO;
         }).collect(Collectors.toList());
         // 将转换后的VO列表设置到分页对象中
@@ -870,6 +878,56 @@ public class PictureServiceImpl extends ServiceImpl<PictureMapper, Picture>
             return url.substring(host.length() + 1); // 去掉 "https://host/"
         }
         return url;
+    }
+
+    /**
+     * 设置分享量显示控制
+     * 规则：
+     * 1. 图片上传者：显示具体分享量
+     * 2. 管理员：显示所有图片的具体分享量
+     * 3. 其他用户：模糊显示或不显示分享量
+     *
+     * @param pictureVO 图片VO对象
+     * @param request HTTP请求对象
+     */
+    private void setShareCountDisplayControl(PictureVO pictureVO, HttpServletRequest request) {
+        if (pictureVO == null || request == null) {
+            pictureVO.setShowShareCount(false);
+            return;
+        }
+
+        try {
+            // 获取当前登录用户
+            User loginUser = userService.getLoginUser(request);
+            if (loginUser == null) {
+                // 未登录用户，不显示分享量
+                pictureVO.setShowShareCount(false);
+                return;
+            }
+
+            // 判断是否显示具体分享量
+            boolean showShareCount = false;
+
+            // 1. 图片上传者：显示具体分享量
+            if (pictureVO.getUserId() != null && pictureVO.getUserId().equals(loginUser.getId())) {
+                showShareCount = true;
+            }
+            // 2. 管理员：显示所有图片的具体分享量
+            else if (userService.isAdmin(loginUser)) {
+                showShareCount = true;
+            }
+            // 3. 其他用户：不显示具体分享量
+            else {
+                showShareCount = false;
+            }
+
+            pictureVO.setShowShareCount(showShareCount);
+
+        } catch (Exception e) {
+            // 异常情况下，不显示分享量
+            log.warn("设置分享量显示控制时发生异常: {}", e.getMessage());
+            pictureVO.setShowShareCount(false);
+        }
     }
 
 }
