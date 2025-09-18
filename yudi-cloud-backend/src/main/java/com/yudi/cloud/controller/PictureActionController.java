@@ -1,6 +1,7 @@
 package com.yudi.cloud.controller;
 
 import cn.hutool.core.util.StrUtil;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.yudi.cloud.common.BaseResponse;
 import com.yudi.cloud.common.Result;
 import com.yudi.cloud.exception.BusinessException;
@@ -8,6 +9,7 @@ import com.yudi.cloud.exception.ErrorCode;
 import com.yudi.cloud.exception.ThrowUtils;
 import com.yudi.cloud.mapper.UserPictureActionMapper;
 import com.yudi.cloud.model.entity.User;
+import com.yudi.cloud.model.vo.picture.PictureVO;
 import com.yudi.cloud.model.vo.picture.UserPictureActionStatus;
 import com.yudi.cloud.service.PictureActionService;
 import com.yudi.cloud.service.UserService;
@@ -19,7 +21,6 @@ import javax.servlet.http.HttpServletRequest;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.List;
-import java.util.Map;
 
 /**
  * 图片行为控制器
@@ -112,6 +113,22 @@ public class PictureActionController {
     }
 
     /**
+     * 增加下载量
+     *
+     * @param pictureId 图片ID
+     * @param request   HTTP请求
+     * @return 下载操作结果（包含是否成功和最新计数）
+     */
+    @PostMapping("/download")
+    public BaseResponse<Map<String, Object>> addDownloadCount(@RequestParam Long pictureId, HttpServletRequest request) {
+        ThrowUtils.throwIf(pictureId == null || pictureId <= 0, ErrorCode.PARAMETER_ERROR, "图片ID不能为空");
+        User loginUser = userService.getLoginUser(request);
+        ThrowUtils.throwIf(loginUser == null, ErrorCode.NOT_LOGIN_ERROR);
+        Map<String, Object> result = pictureActionService.addDownloadCount(pictureId, loginUser.getId());
+        return Result.success(result);
+    }
+
+    /**
      * 获取用户对图片的行为状态
      *
      * @param pictureId 图片ID
@@ -126,6 +143,26 @@ public class PictureActionController {
         ThrowUtils.throwIf(loginUser == null, ErrorCode.NOT_LOGIN_ERROR);
         UserPictureActionStatus status = pictureActionService.getUserActionStatus(pictureId, loginUser.getId());
         return Result.success(status);
+    }
+
+    /**
+     * 生成图片分享链接（MVP简化版本）
+     *
+     * @param pictureId 图片ID
+     * @param request   HTTP请求
+     * @return 分享链接
+     */
+    @GetMapping("/share-link/{pictureId}")
+    public BaseResponse<?> generateShareLink(@PathVariable Long pictureId, HttpServletRequest request) {
+        log.info("收到生成分享链接请求，图片ID: {}", pictureId);
+        ThrowUtils.throwIf(pictureId == null || pictureId <= 0, ErrorCode.PARAMETER_ERROR, "图片ID不能为空");
+        User loginUser = userService.getLoginUser(request);
+        ThrowUtils.throwIf(loginUser == null, ErrorCode.NOT_LOGIN_ERROR);
+        
+        // 生成分享链接
+        String shareLink = pictureActionService.generateShareLink(pictureId, request);
+        log.info("生成分享链接成功: {}", shareLink);
+        return Result.success(shareLink);
     }
 
     /**
@@ -161,6 +198,20 @@ public class PictureActionController {
         // 4. 执行业务逻辑
         Map<Long, UserPictureActionStatus> result = pictureActionService.batchGetUserActionStatus(pictureIdList, loginUser.getId());
         
+        return Result.success(result);
+    }
+
+    /**
+     * 获取用户统计数据
+     *
+     * @param request HTTP请求
+     * @return 用户统计数据
+     */
+    @GetMapping("/user-stats")
+    public BaseResponse<Map<String, Object>> getUserStats(HttpServletRequest request) {
+        User loginUser = userService.getLoginUser(request);
+        ThrowUtils.throwIf(loginUser == null, ErrorCode.NOT_LOGIN_ERROR);
+        Map<String, Object> result = pictureActionService.getUserStats(loginUser.getId());
         return Result.success(result);
     }
 }

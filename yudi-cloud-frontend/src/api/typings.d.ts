@@ -218,7 +218,7 @@ declare namespace API {
 
   type getPictureVOByIdUsingGETParams = {
     /** id */
-    id?: number
+    id?: number | string
   }
 
   type getSpaceByIdUsingGETParams = {
@@ -462,6 +462,7 @@ declare namespace API {
     likeCount?: number
     collectCount?: number
     shareCount?: number
+    downloadCount?: number
     showShareCount?: boolean
     // 添加用户行为状态字段，确保页面刷新后状态正确显示
     liked?: boolean

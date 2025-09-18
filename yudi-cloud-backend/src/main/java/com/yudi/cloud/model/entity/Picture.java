@@ -146,6 +146,11 @@ public class Picture implements Serializable {
     private Long shareCount;
 
     /**
+     * 下载量
+     */
+    private Long downloadCount;
+
+    /**
      * 是否删除
      */
     @TableLogic

@@ -20,6 +20,8 @@ import UserExchangeVipPage from '@/pages/UserExchangeVipPage.vue'
 import ProfilePage from '@/pages/ProfilePage.vue'
 import AboutPage from '@/pages/AboutPage.vue'
 import PublishedListPage from '@/pages/PublishedListPage.vue'
+import LikedPicturesPage from '@/pages/LikedPicturesPage.vue'
+import CollectedPicturesPage from '@/pages/CollectedPicturesPage.vue'
 
 // @author 程序员鱼皮 <a href="https://www.codefather.cn">编程导航原创项目</a>
 const router = createRouter({
@@ -99,8 +101,18 @@ const router = createRouter({
     },
     {
       path: '/published_list',
-      name: '发布列表',
+      name: '我的发布',
       component: PublishedListPage,
+    },
+    {
+      path: '/liked_pictures',
+      name: '我的点赞',
+      component: LikedPicturesPage,
+    },
+    {
+      path: '/collected_pictures',
+      name: '我的收藏',
+      component: CollectedPicturesPage,
     },
     {
       path: '/space/:id',

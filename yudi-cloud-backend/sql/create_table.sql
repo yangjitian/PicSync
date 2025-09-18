@@ -158,5 +158,9 @@ CREATE INDEX idx_shareCount ON picture (shareCount);
 CREATE INDEX idx_viewCount ON picture (viewCount);
 CREATE INDEX idx_hot_score ON picture (likeCount DESC, collectCount DESC, viewCount DESC);
 
-ALTER TABLE user_picture_action
-    ADD UNIQUE KEY uk_user_picture_like (user_id, picture_id, action_type) COMMENT '用户图片点赞/收藏唯一索引';
+-- 为picture表添加下载量字段
+ALTER TABLE picture
+    ADD COLUMN downloadCount BIGINT DEFAULT 0 NOT NULL COMMENT '下载量';
+
+-- 为下载量字段创建索引（可选，用于按下载量排序）
+CREATE INDEX idx_downloadCount ON picture (downloadCount);

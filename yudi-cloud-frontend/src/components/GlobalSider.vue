@@ -40,7 +40,7 @@ const fixedMenuItems = [
   },
   {
     key: '/published_list',
-    label: '发布列表',
+    label: '我的发布',
     icon: () => h(FileTextOutlined),
   },
   {

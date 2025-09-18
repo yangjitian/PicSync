@@ -7,7 +7,21 @@
       </a-typography-link>
       <div style="margin-bottom: 16px" />
       <h4>手机扫码查看</h4>
-      <a-qrcode :value="link" />
+      <div v-if="link">
+        <a-qrcode 
+          :value="link" 
+          :size="200"
+          type="svg"
+          :bordered="false"
+          :error-level="'M'"
+        />
+      </div>
+      <div v-else style="color: red;">
+        分享链接为空，无法生成二维码
+      </div>
+      <div style="margin-top: 10px; font-size: 12px; color: #666;">
+        调试信息: {{ link }}
+      </div>
     </a-modal>
   </div>
 </template>

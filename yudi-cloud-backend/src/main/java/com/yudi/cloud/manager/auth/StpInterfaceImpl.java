@@ -11,6 +11,7 @@ import cn.hutool.http.ContentType;
 import cn.hutool.http.Header;
 import cn.hutool.json.JSONObject;
 import cn.hutool.json.JSONUtil;
+import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.yudi.cloud.exception.BusinessException;
 import com.yudi.cloud.exception.ErrorCode;
 import com.yudi.cloud.manager.auth.model.SpaceUserPermissionConstant;
@@ -108,10 +109,10 @@ public class StpInterfaceImpl implements StpInterface {
                 throw new BusinessException(ErrorCode.CANNOT_FOUND_DATA_ERROR, "未找到空间用户信息");
             }
             // 查询当前登录用户在该空间的角色
-            SpaceUser loginSpaceUser = spaceUserService.lambdaQuery()
-                    .eq(SpaceUser::getSpaceId, spaceUser.getSpaceId())
-                    .eq(SpaceUser::getUserId, userId)
-                    .one();
+            QueryWrapper<SpaceUser> queryWrapper1 = new QueryWrapper<>();
+            queryWrapper1.eq("spaceId", spaceUser.getSpaceId())
+                        .eq("userId", userId);
+            SpaceUser loginSpaceUser = spaceUserService.getOne(queryWrapper1);
             log.debug("通过spaceUserId查询到的SpaceUser: {}", loginSpaceUser);
             if (loginSpaceUser == null) {
                 log.debug("用户{}在空间{}中没有角色，返回空权限列表", userId, spaceUser.getSpaceId());
@@ -136,10 +137,10 @@ public class StpInterfaceImpl implements StpInterface {
                 }
             }
             
-            Picture picture = pictureService.lambdaQuery()
-                    .eq(Picture::getId, pictureId)
-                    .select(Picture::getId, Picture::getSpaceId, Picture::getUserId)
-                    .one();
+            QueryWrapper<Picture> pictureQueryWrapper = new QueryWrapper<>();
+            pictureQueryWrapper.eq("id", pictureId)
+                              .select("id", "spaceId", "userId");
+            Picture picture = pictureService.getOne(pictureQueryWrapper);
             if (picture == null) {
                 throw new BusinessException(ErrorCode.CANNOT_FOUND_DATA_ERROR, "未找到图片信息");
             }
@@ -175,10 +176,10 @@ public class StpInterfaceImpl implements StpInterface {
             }
         } else {
             // 团队空间，查询 SpaceUser 并获取角色和权限
-            spaceUser = spaceUserService.lambdaQuery()
-                    .eq(SpaceUser::getSpaceId, spaceId)
-                    .eq(SpaceUser::getUserId, userId)
-                    .one();
+            QueryWrapper<SpaceUser> queryWrapper2 = new QueryWrapper<>();
+            queryWrapper2.eq("spaceId", spaceId)
+                        .eq("userId", userId);
+            spaceUser = spaceUserService.getOne(queryWrapper2);
             log.debug("团队空间查询到的SpaceUser: {}", spaceUser);
             if (spaceUser == null) {
                 log.debug("用户{}在团队空间{}中没有角色，返回空权限列表", userId, spaceId);

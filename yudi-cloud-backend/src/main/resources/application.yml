@@ -39,3 +39,10 @@ knife4j:
         api-rule: package
         api-rule-resources:
           - com.yudi.cloud.controller
+
+# 移动端访问配置
+mobile:
+  # 开发环境移动端访问地址（替换localhost为实际IP）
+  frontend-url: "http://localhost:5173"
+  # 生产环境前端地址
+  production-url: "https://yourdomain.com"

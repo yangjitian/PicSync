@@ -58,6 +58,7 @@
       :canDelete="canDeletePicture"
       :onReload="fetchData"
       layoutMode="detailed"
+      @picture-click="handlePictureClick"
     />
     <!-- 分页 -->
     <a-pagination
@@ -245,6 +246,12 @@ const goToSpaceUserManage = () => {
 // 跳转到空间分析页面
 const goToSpaceAnalyze = () => {
   router.push(`/space_analyze?spaceId=${props.id}`)
+}
+
+// --- 图片点击处理 ---
+const handlePictureClick = async (picture: API.PictureVO) => {
+  // 跳转到详情页
+  window.open(`/picture/${picture.id}`, '_blank')
 }
 
 // 空间 id 改变时，必须重新获取数据

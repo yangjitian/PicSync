@@ -57,6 +57,7 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 /**
  * @author yudi
@@ -771,6 +772,144 @@ public class PictureServiceImpl extends ServiceImpl<PictureMapper, Picture>
                 .collect(Collectors.toList());
     }
 
+    @Override
+    public List<PictureVO> searchLikedPicturesByColor(String picColor, User loginUser) {
+        ThrowUtils.throwIf(StrUtil.isBlank(picColor) || loginUser == null, ErrorCode.PARAMETER_ERROR);
+        
+        // 1. 查询用户点赞的图片ID列表
+        List<UserPictureAction> likedActions = userPictureActionMapper.selectList(
+                new QueryWrapper<UserPictureAction>()
+                        .eq("user_id", loginUser.getId())
+                        .eq("action_type", "LIKE")
+                        .eq("status", 1)
+        );
+        
+        if (CollUtil.isEmpty(likedActions)) {
+            return Collections.emptyList();
+        }
+        
+        List<Long> likedPictureIds = likedActions.stream()
+                .map(UserPictureAction::getPictureId)
+                .collect(Collectors.toList());
+        
+        // 2. 查询这些图片的详细信息
+        List<Picture> pictureList = this.lambdaQuery()
+                .in(Picture::getId, likedPictureIds)
+                .isNotNull(Picture::getPicColor)
+                .list();
+        
+        if (CollUtil.isEmpty(pictureList)) {
+            return Collections.emptyList();
+        }
+
+        // 3. 将用户输入的颜色字符串（如 "#FF0000"）解析为 Color 对象
+        Color targetColor = Color.decode(picColor);
+
+        // 4. 根据颜色相似度进行排序并转换为VO
+        List<PictureVO> pictureVOList = pictureList.stream()
+                // 过滤掉没有颜色信息的图片，减少后续计算量
+                .filter(picture -> StrUtil.isNotBlank(picture.getPicColor()))
+                // 根据颜色相似度进行排序
+                .sorted(Comparator.comparingDouble(picture -> {
+                    try {
+                        Color pictureColor = Color.decode(picture.getPicColor());
+                        // 计算当前图片颜色与目标颜色的相似度
+                        return -ColorSimilarUtils.calculateColorSimilarity(targetColor, pictureColor);
+                    } catch (NumberFormatException e) {
+                        // 如果颜色格式不正确导致解析失败，返回最大值,这样解析失败的图片会被排到列表最后
+                        return Double.MAX_VALUE;
+                    }
+                }))
+                .limit(12)
+                .map(picture -> {
+                    PictureVO pictureVO = PictureVO.convertToPictureVO(picture);
+                    // 设置点赞状态为true（因为这些都是用户点赞的图片）
+                    pictureVO.setLiked(true);
+                    // 查询收藏状态
+                    UserPictureAction collectAction = userPictureActionMapper.selectOne(
+                            new QueryWrapper<UserPictureAction>()
+                                    .eq("user_id", loginUser.getId())
+                                    .eq("picture_id", picture.getId())
+                                    .eq("action_type", "COLLECT")
+                                    .eq("status", 1)
+                    );
+                    pictureVO.setCollected(collectAction != null);
+                    return pictureVO;
+                })
+                .collect(Collectors.toList());
+        
+        return pictureVOList;
+    }
+
+    @Override
+    public List<PictureVO> searchCollectedPicturesByColor(String picColor, User loginUser) {
+        ThrowUtils.throwIf(StrUtil.isBlank(picColor) || loginUser == null, ErrorCode.PARAMETER_ERROR);
+        
+        // 1. 查询用户收藏的图片ID列表
+        List<UserPictureAction> collectedActions = userPictureActionMapper.selectList(
+                new QueryWrapper<UserPictureAction>()
+                        .eq("user_id", loginUser.getId())
+                        .eq("action_type", "COLLECT")
+                        .eq("status", 1)
+        );
+        
+        if (CollUtil.isEmpty(collectedActions)) {
+            return Collections.emptyList();
+        }
+        
+        List<Long> collectedPictureIds = collectedActions.stream()
+                .map(UserPictureAction::getPictureId)
+                .collect(Collectors.toList());
+        
+        // 2. 查询这些图片的详细信息
+        List<Picture> pictureList = this.lambdaQuery()
+                .in(Picture::getId, collectedPictureIds)
+                .isNotNull(Picture::getPicColor)
+                .list();
+        
+        if (CollUtil.isEmpty(pictureList)) {
+            return Collections.emptyList();
+        }
+
+        // 3. 将用户输入的颜色字符串（如 "#FF0000"）解析为 Color 对象
+        Color targetColor = Color.decode(picColor);
+
+        // 4. 根据颜色相似度进行排序并转换为VO
+        List<PictureVO> pictureVOList = pictureList.stream()
+                // 过滤掉没有颜色信息的图片，减少后续计算量
+                .filter(picture -> StrUtil.isNotBlank(picture.getPicColor()))
+                // 根据颜色相似度进行排序
+                .sorted(Comparator.comparingDouble(picture -> {
+                    try {
+                        Color pictureColor = Color.decode(picture.getPicColor());
+                        // 计算当前图片颜色与目标颜色的相似度
+                        return -ColorSimilarUtils.calculateColorSimilarity(targetColor, pictureColor);
+                    } catch (NumberFormatException e) {
+                        // 如果颜色格式不正确导致解析失败，返回最大值,这样解析失败的图片会被排到列表最后
+                        return Double.MAX_VALUE;
+                    }
+                }))
+                .limit(12)
+                .map(picture -> {
+                    PictureVO pictureVO = PictureVO.convertToPictureVO(picture);
+                    // 设置收藏状态为true（因为这些都是用户收藏的图片）
+                    pictureVO.setCollected(true);
+                    // 查询点赞状态
+                    UserPictureAction likeAction = userPictureActionMapper.selectOne(
+                            new QueryWrapper<UserPictureAction>()
+                                    .eq("user_id", loginUser.getId())
+                                    .eq("picture_id", picture.getId())
+                                    .eq("action_type", "LIKE")
+                                    .eq("status", 1)
+                    );
+                    pictureVO.setLiked(likeAction != null);
+                    return pictureVO;
+                })
+                .collect(Collectors.toList());
+        
+        return pictureVOList;
+    }
+
     /**
      * AI扩图
      *
@@ -966,6 +1105,123 @@ public class PictureServiceImpl extends ServiceImpl<PictureMapper, Picture>
             // 异常情况下，不显示分享量
             log.warn("设置分享量显示控制时发生异常: {}", e.getMessage());
             pictureVO.setShowShareCount(false);
+        }
+    }
+
+    /**
+     * 分页获取用户点赞的图片
+     *
+     * @param queryDTO 查询参数
+     * @param request  http请求
+     * @return 包装后的分页对象
+     */
+    @Override
+    public Page<PictureVO> listLikedPicturesByPage(PictureQueryDTO queryDTO, HttpServletRequest request) {
+        User loginUser = userService.getLoginUser(request);
+        long current = queryDTO.getCurrent();
+        long pageSize = queryDTO.getPageSize();
+        
+        // 构建查询条件，包含搜索条件
+        QueryWrapper<Picture> queryWrapper = buildLikedPicturesQueryWrapper(loginUser.getId(), queryDTO);
+        
+        // 分页查询
+        Page<Picture> picturePage = this.page(new Page<>(current, pageSize), queryWrapper);
+        
+        return this.getPictureVOPage(picturePage, request);
+    }
+
+    @Override
+    public Page<PictureVO> listCollectedPicturesByPage(PictureQueryDTO queryDTO, HttpServletRequest request) {
+        User loginUser = userService.getLoginUser(request);
+        long current = queryDTO.getCurrent();
+        long pageSize = queryDTO.getPageSize();
+        
+        // 构建查询条件，包含搜索条件
+        QueryWrapper<Picture> queryWrapper = buildCollectedPicturesQueryWrapper(loginUser.getId(), queryDTO);
+        
+        // 分页查询
+        Page<Picture> picturePage = this.page(new Page<>(current, pageSize), queryWrapper);
+        
+        return this.getPictureVOPage(picturePage, request);
+    }
+
+    /**
+     * 构建用户点赞图片的查询条件
+     */
+    private QueryWrapper<Picture> buildLikedPicturesQueryWrapper(Long userId, PictureQueryDTO queryDTO) {
+        QueryWrapper<Picture> queryWrapper = new QueryWrapper<>();
+        
+        // 基础条件：只查询用户点赞的图片
+        queryWrapper.inSql("id", 
+            "SELECT picture_id FROM user_picture_action WHERE user_id = " + userId + 
+            " AND action_type = 'LIKE' AND status = 1");
+        
+        // 应用搜索条件
+        applySearchConditions(queryWrapper, queryDTO);
+        
+        return queryWrapper;
+    }
+
+    /**
+     * 构建用户收藏图片的查询条件
+     */
+    private QueryWrapper<Picture> buildCollectedPicturesQueryWrapper(Long userId, PictureQueryDTO queryDTO) {
+        QueryWrapper<Picture> queryWrapper = new QueryWrapper<>();
+        
+        // 基础条件：只查询用户收藏的图片
+        queryWrapper.inSql("id", 
+            "SELECT picture_id FROM user_picture_action WHERE user_id = " + userId + 
+            " AND action_type = 'COLLECT' AND status = 1");
+        
+        // 应用搜索条件
+        applySearchConditions(queryWrapper, queryDTO);
+        
+        return queryWrapper;
+    }
+
+    /**
+     * 应用搜索条件到查询包装器
+     */
+    private void applySearchConditions(QueryWrapper<Picture> queryWrapper, PictureQueryDTO queryDTO) {
+        if (queryDTO == null) {
+            return;
+        }
+        
+        // 从对象中取值
+        String name = queryDTO.getName();
+        String introduction = queryDTO.getIntroduction();
+        String category = queryDTO.getCategory();
+        List<String> tags = queryDTO.getTags();
+        String searchText = queryDTO.getSearchText();
+        String sortField = queryDTO.getSortField();
+        String sortOrder = queryDTO.getSortOrder();
+        
+        // 从多字段中搜索
+        if (StrUtil.isNotBlank(searchText)) {
+            queryWrapper.and(qw -> qw.like("name", searchText)
+                    .or()
+                    .like("introduction", searchText)
+            );
+        }
+        
+        // 精确匹配条件
+        queryWrapper.like(StrUtil.isNotBlank(name), "name", name);
+        queryWrapper.eq(StrUtil.isNotBlank(category), "category", category);
+        
+        // 标签搜索
+        if (CollUtil.isNotEmpty(tags)) {
+            for (String tag : tags) {
+                queryWrapper.like("tags", tag);
+            }
+        }
+        
+        // 排序
+        if (StrUtil.isNotBlank(sortField)) {
+            boolean isAsc = "ascend".equals(sortOrder);
+            queryWrapper.orderBy(true, isAsc, sortField);
+        } else {
+            // 默认按创建时间倒序
+            queryWrapper.orderByDesc("create_time");
         }
     }
 

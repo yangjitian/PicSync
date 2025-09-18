@@ -127,6 +127,22 @@ public interface PictureService extends IService<Picture> {
     List<PictureVO> searchPictureByColor(Long spaceId, String picColor, User loginUser);
 
     /**
+     * 按颜色搜索用户点赞的图片
+     * @param picColor
+     * @param loginUser
+     * @return
+     */
+    List<PictureVO> searchLikedPicturesByColor(String picColor, User loginUser);
+
+    /**
+     * 按颜色搜索用户收藏的图片
+     * @param picColor
+     * @param loginUser
+     * @return
+     */
+    List<PictureVO> searchCollectedPicturesByColor(String picColor, User loginUser);
+
+    /**
      * AI扩图
      * @param createPictureOutPaintingTaskRequest
      * @param loginUser
@@ -141,4 +157,22 @@ public interface PictureService extends IService<Picture> {
      * @param loginUser
      */
     void editPictureByBatch(PictureEditByBatchRequest request, User loginUser);
+
+    /**
+     * 分页获取用户点赞的图片
+     *
+     * @param queryDTO 查询参数
+     * @param request  http请求
+     * @return 包装后的分页对象
+     */
+    Page<PictureVO> listLikedPicturesByPage(PictureQueryDTO queryDTO, HttpServletRequest request);
+
+    /**
+     * 分页获取用户收藏的图片
+     *
+     * @param queryDTO 查询参数
+     * @param request  http请求
+     * @return 包装后的分页对象
+     */
+    Page<PictureVO> listCollectedPicturesByPage(PictureQueryDTO queryDTO, HttpServletRequest request);
 }

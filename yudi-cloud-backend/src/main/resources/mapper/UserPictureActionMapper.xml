@@ -94,4 +94,22 @@
         AND status = 1
     </update>
 
+    <!-- 统计用户点赞的图片数量 -->
+    <select id="countUserLikedPictures" resultType="java.lang.Long">
+        SELECT COUNT(DISTINCT picture_id)
+        FROM user_picture_action
+        WHERE user_id = #{userId}
+        AND action_type = 'LIKE'
+        AND status = 1
+    </select>
+
+    <!-- 统计用户收藏的图片数量 -->
+    <select id="countUserCollectedPictures" resultType="java.lang.Long">
+        SELECT COUNT(DISTINCT picture_id)
+        FROM user_picture_action
+        WHERE user_id = #{userId}
+        AND action_type = 'COLLECT'
+        AND status = 1
+    </select>
+
 </mapper>

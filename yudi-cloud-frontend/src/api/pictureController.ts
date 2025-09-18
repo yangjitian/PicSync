@@ -203,6 +203,36 @@ export async function searchPictureByColorUsingPost(
   })
 }
 
+/** searchLikedPicturesByColor POST /api/picture/search/liked/color */
+export async function searchLikedPicturesByColorUsingPost(
+  body: API.SearchPictureByColorRequest,
+  options?: { [key: string]: any }
+) {
+  return request<API.BaseResponseListPictureVO_>('/api/picture/search/liked/color', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    data: body,
+    ...(options || {}),
+  })
+}
+
+/** searchCollectedPicturesByColor POST /api/picture/search/collected/color */
+export async function searchCollectedPicturesByColorUsingPost(
+  body: API.SearchPictureByColorRequest,
+  options?: { [key: string]: any }
+) {
+  return request<API.BaseResponseListPictureVO_>('/api/picture/search/collected/color', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    data: body,
+    ...(options || {}),
+  })
+}
+
 /** searchPictureByPicture POST /api/picture/search/picture */
 export async function searchPictureByPictureUsingPost(
   body: API.SearchPictureByPictureRequest,
@@ -370,6 +400,31 @@ export async function addPictureShareUsingPost(
   })
 }
 
+/** 增加下载量 POST /api/picture/action/download */
+export async function addPictureDownloadUsingPost(
+  pictureId: number,
+  options?: { [key: string]: any }
+) {
+  return request<API.BaseResponseMapStringObject_>('/api/picture/action/download', {
+    method: 'POST',
+    params: {
+      pictureId,
+    },
+    ...(options || {}),
+  })
+}
+
+/** 生成图片分享链接 GET /api/picture/action/share-link/{pictureId} */
+export async function generatePictureShareLinkUsingGet(
+  pictureId: number,
+  options?: { [key: string]: any }
+) {
+  return request<API.BaseResponseString_>(`/api/picture/action/share-link/${pictureId}`, {
+    method: 'GET',
+    ...(options || {}),
+  })
+}
+
 /** 获取用户对图片的行为状态 GET /api/picture/action/user-action */
 export async function getPictureUserActionUsingGet(
   pictureId: number,
@@ -394,6 +449,46 @@ export async function batchGetPictureUserActionsUsingGet(
     params: {
       pictureIds,
     },
+    ...(options || {}),
+  })
+}
+
+/** 获取用户点赞的图片列表 POST /api/picture/action/liked-pictures */
+export async function getUserLikedPicturesUsingPost(
+  body: API.PictureQueryRequest,
+  options?: { [key: string]: any }
+) {
+  return request<API.BaseResponsePagePictureVO_>('/api/picture/action/liked-pictures', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    data: body,
+    ...(options || {}),
+  })
+}
+
+/** 获取用户收藏的图片列表 POST /api/picture/action/collected-pictures */
+export async function getUserCollectedPicturesUsingPost(
+  body: API.PictureQueryRequest,
+  options?: { [key: string]: any }
+) {
+  return request<API.BaseResponsePagePictureVO_>('/api/picture/action/collected-pictures', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    data: body,
+    ...(options || {}),
+  })
+}
+
+/** 获取用户统计数据 GET /api/picture/action/user-stats */
+export async function getUserStatsUsingGet(
+  options?: { [key: string]: any }
+) {
+  return request<API.BaseResponseMapStringObject_>('/api/picture/action/user-stats', {
+    method: 'GET',
     ...(options || {}),
   })
 }

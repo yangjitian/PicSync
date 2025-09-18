@@ -1,6 +1,7 @@
 package com.yudi.cloud.mapper;
 
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
+import com.yudi.cloud.model.entity.Picture;
 import com.yudi.cloud.model.entity.UserPictureAction;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
@@ -76,4 +77,17 @@ public interface UserPictureActionMapper extends BaseMapper<UserPictureAction> {
      */
     int updateShareTime(@Param("userId") Long userId, @Param("pictureId") Long pictureId);
 
+    /**
+     * 统计用户点赞的图片数量
+     * @param userId 用户ID
+     * @return 点赞的图片数量
+     */
+    Long countUserLikedPictures(@Param("userId") Long userId);
+
+    /**
+     * 统计用户收藏的图片数量
+     * @param userId 用户ID
+     * @return 收藏的图片数量
+     */
+    Long countUserCollectedPictures(@Param("userId") Long userId);
 }

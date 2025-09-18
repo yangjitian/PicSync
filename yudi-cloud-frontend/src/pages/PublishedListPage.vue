@@ -2,7 +2,7 @@
   <div id="publishedListPage" :key="componentKey">
     <!-- 页面标题和操作按钮 -->
     <a-flex justify="space-between">
-      <h2>发布列表</h2>
+      <h2>我的发布</h2>
       <a-space>
         <a-button type="primary" @click="goToAddPicture">
           + 发布图片
@@ -66,6 +66,7 @@
       :canDelete="true"
       :onReload="fetchData"
       layoutMode="detailed"
+      @picture-click="handlePictureClick"
     />
     
     <!-- 分页 -->
@@ -131,10 +132,10 @@ const fetchData = async () => {
       dataList.value = res.data.data.records || []
       total.value = res.data.data.total || 0
     } else {
-      message.error('获取发布列表失败，' + res.data.message)
+      message.error('获取我的发布失败，' + res.data.message)
     }
   } catch (error: any) {
-    message.error('获取发布列表失败，' + error.message)
+    message.error('获取我的发布失败，' + error.message)
   } finally {
     loading.value = false
   }
@@ -246,7 +247,7 @@ watch(
 // 监听路由变化，更新高亮菜单项（参考 FloatingSidebar 的实现）
 router.afterEach((to, from) => {
   
-  // 如果是发布列表页面的路由变化，重新获取数据
+  // 如果是我的发布页面的路由变化，重新获取数据
   if (to.path === '/published_list' && to.path !== from.path) {
     // 使用 nextTick 确保路由已经更新
     nextTick(() => {
@@ -283,6 +284,12 @@ const sendPageRefreshEvent = () => {
   nextTick(() => {
     window.dispatchEvent(new CustomEvent('refreshPublishedListPage'))
   })
+}
+
+// --- 图片点击处理 ---
+const handlePictureClick = async (picture: API.PictureVO) => {
+  // 跳转到详情页
+  window.open(`/picture/${picture.id}`, '_blank')
 }
 </script>
 

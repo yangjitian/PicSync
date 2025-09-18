@@ -1,27 +1,36 @@
 package com.yudi.cloud.service.impl;
 
+import cn.hutool.core.collection.CollUtil;
+import cn.hutool.core.util.StrUtil;
+import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.yudi.cloud.exception.BusinessException;
 import com.yudi.cloud.exception.ErrorCode;
 import com.yudi.cloud.exception.ThrowUtils;
+import com.yudi.cloud.mapper.PictureMapper;
 import com.yudi.cloud.mapper.UserPictureActionMapper;
 import com.yudi.cloud.model.entity.Picture;
 import com.yudi.cloud.model.entity.UserPictureAction;
+import com.yudi.cloud.model.vo.picture.PictureVO;
 import com.yudi.cloud.model.vo.picture.UserPictureActionStatus;
 import com.yudi.cloud.service.PictureActionService;
 import com.yudi.cloud.service.PictureService;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import javax.annotation.Resource;
+import javax.servlet.http.HttpServletRequest;
 import java.time.LocalDateTime;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
 
 import static java.time.Duration.between;
 
@@ -42,10 +51,20 @@ public class PictureActionServiceImpl implements PictureActionService {
     private PictureService pictureService;
 
     @Resource
+    private PictureMapper pictureMapper;
+
+    @Resource
     private StringRedisTemplate stringRedisTemplate;
 
     @Resource
     private JdbcTemplate jdbcTemplate;
+
+    // 移动端访问配置
+    @Value("${mobile.frontend-url:http://localhost:5173}")
+    private String mobileFrontendUrl;
+
+    @Value("${mobile.production-url:}")
+    private String productionUrl;
 
     // Redis Key 前缀，用于构造防重/标记键
     private static final String VIEW_REDIS_PREFIX = "view:";
@@ -57,9 +76,7 @@ public class PictureActionServiceImpl implements PictureActionService {
     private static final String PICTURE_SHARE_COUNT_CACHE_KEY = "picture:shareCount";
     private static final String PICTURE_LIKE_COUNT_CACHE_KEY = "picture:likeCount";
     private static final String PICTURE_COLLECT_COUNT_CACHE_KEY = "picture:collectCount";
-
-    // 点赞/收藏等短期缓存时长（小时）
-    private static final int ACTION_CACHE_HOURS = 1;
+    private static final String PICTURE_DOWNLOAD_COUNT_CACHE_KEY = "picture:downloadCount";
 
     /**
      * 增加浏览量（一天内防重复，从当天 00:00:00 到 23:59:59）
@@ -284,59 +301,6 @@ public class PictureActionServiceImpl implements PictureActionService {
         return result;
     }
 
-    // 辅助方法：首字母大写（用于反射调用getter）
-    private String capitalize(String str) {
-        if (str == null || str.isEmpty()) return str;
-        return str.substring(0, 1).toUpperCase() + str.substring(1);
-    }
-
-    /**
-     *  优化：直接获取当前计数，避免反射调用
-     */
-    private long getCurrentCount(Picture picture, String countField) {
-        if (picture == null) return 0L;
-
-        switch (countField) {
-            case "likeCount":
-                return picture.getLikeCount() != null ? picture.getLikeCount() : 0L;
-            case "collectCount":
-                return picture.getCollectCount() != null ? picture.getCollectCount() : 0L;
-            case "viewCount":
-                return picture.getViewCount() != null ? picture.getViewCount() : 0L;
-            case "shareCount":
-                return picture.getShareCount() != null ? picture.getShareCount() : 0L;
-            default:
-                return 0L;
-        }
-    }
-
-    /**
-     *  优化：原子更新图片计数，确保数据一致性（高性能版本）
-     */
-    private void updatePictureCountAtomic(String column, Long pictureId, int delta) {
-        try {
-            //  优化：使用更高效的SQL语句，减少数据库负载
-            String sql = delta > 0
-                    ? "UPDATE picture SET " + column + " = " + column + " + 1 WHERE id = ?"
-                    : "UPDATE picture SET " + column + " = GREATEST(" + column + " - 1, 0) WHERE id = ?";
-
-            //  优化：使用批量更新，减少数据库往返
-            int updatedRows = jdbcTemplate.update(sql, pictureId);
-            if (updatedRows == 0) {
-                log.warn("原子更新图片{}的{}失败，可能图片不存在", pictureId, column);
-                throw new BusinessException(ErrorCode.CANNOT_FOUND_DATA_ERROR, "图片不存在");
-            }
-
-            //  优化：减少日志输出，提高性能
-            if (log.isDebugEnabled()) {
-                log.debug("原子更新图片{}的{}成功，delta={}", pictureId, column, delta);
-            }
-        } catch (Exception e) {
-            log.error("原子更新图片计数失败: pictureId={}, column={}, delta={}", pictureId, column, delta, e);
-            throw new BusinessException(ErrorCode.SYSTEM_ERROR, "更新计数失败");
-        }
-    }
-
     /**
      * 增加分享数（用户可无限分享，但图片分享数只增加一次）
      * 优化：首次分享INSERT，重复分享UPDATE update_time
@@ -400,6 +364,44 @@ public class PictureActionServiceImpl implements PictureActionService {
         result.put("shareCount", cachedShareCount);
         result.put("countIncreased", countIncreased); // 新增：是否增加了分享数
         log.info("用户{}分享图片{}结果：成功，当前分享数：{}，分享数是否增加：{}", userId, pictureId, cachedShareCount, countIncreased);
+        return result;
+    }
+
+    /**
+     * 增加下载量（仅统计下载次数，不记录用户信息）
+     * 每次下载都会增加下载量，不设防重复限制
+     */
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public Map<String, Object> addDownloadCount(Long pictureId, Long userId) {
+        ThrowUtils.throwIf(pictureId == null || pictureId <= 0, ErrorCode.PARAMETER_ERROR, "图片ID不能为空");
+        ThrowUtils.throwIf(userId == null || userId <= 0, ErrorCode.PARAMETER_ERROR, "用户ID不能为空");
+
+        // 增加图片的下载数
+        updatePictureCount("downloadCount", pictureId, 1);
+
+        // 从短期缓存读取下载数（若有）
+        Long cachedDownloadCount = getCountFromCache(PICTURE_DOWNLOAD_COUNT_CACHE_KEY, pictureId);
+        
+        // 如果短期缓存存在则 +1
+        if (cachedDownloadCount != null) {
+            cachedDownloadCount = cachedDownloadCount + 1;
+            stringRedisTemplate.opsForHash().put(PICTURE_DOWNLOAD_COUNT_CACHE_KEY, pictureId.toString(), String.valueOf(cachedDownloadCount));
+        } else {
+            // 如果短期缓存不存在，则从 DB 读取并回填短期缓存（5 分钟）
+            Picture picture = pictureService.getById(pictureId);
+            cachedDownloadCount = picture != null ? picture.getDownloadCount() : 0L;
+            stringRedisTemplate.opsForHash().put(PICTURE_DOWNLOAD_COUNT_CACHE_KEY, pictureId.toString(), String.valueOf(cachedDownloadCount));
+            stringRedisTemplate.expire(PICTURE_DOWNLOAD_COUNT_CACHE_KEY, 5, TimeUnit.MINUTES);
+        }
+
+        // 返回结果
+        Map<String, Object> result = new HashMap<>();
+        result.put("success", true);
+        result.put("downloadCount", cachedDownloadCount);
+
+        log.info("图片{}下载数+1，当前下载数：{}", pictureId, cachedDownloadCount);
+
         return result;
     }
 
@@ -493,5 +495,60 @@ public class PictureActionServiceImpl implements PictureActionService {
     private Long getCountFromCache(String cacheKey, Long pictureId) {
         String val = (String) stringRedisTemplate.opsForHash().get(cacheKey, pictureId.toString()); // 读取 hash field
         return val != null ? Long.parseLong(val) : null; // 若存在则解析为 Long，否则返回 null
+    }
+
+    /**
+     * 生成图片分享链接（MVP简化版本）
+     * @param pictureId 图片ID
+     * @param request HTTP请求
+     * @return 分享链接
+     */
+    @Override
+    public String generateShareLink(Long pictureId, HttpServletRequest request) {
+        // 获取请求的协议和主机信息
+        String protocol = request.getScheme(); // http 或 https
+        String serverName = request.getServerName(); // 域名
+        
+        String baseUrl;
+        
+        // 开发环境：前端通常运行在5173端口
+        // 生产环境：前端和后端可能在同一端口或使用nginx代理
+        if ("localhost".equals(serverName) || "127.0.0.1".equals(serverName)) {
+            // 开发环境：使用配置的移动端访问地址
+            baseUrl = mobileFrontendUrl;
+            log.info("开发环境检测到localhost访问，使用移动端配置地址：{}", baseUrl);
+        } else {
+            // 生产环境：使用生产环境配置或动态构建
+            if (StrUtil.isNotBlank(productionUrl)) {
+                baseUrl = productionUrl;
+                log.info("生产环境使用配置的前端地址：{}", baseUrl);
+            } else {
+                // 动态构建生产环境地址
+                baseUrl = protocol + "://" + serverName;
+                log.info("生产环境动态构建前端地址：{}", baseUrl);
+            }
+        }
+        
+        // 构建完整的分享链接
+        String shareLink = baseUrl + "/picture/" + pictureId;
+        
+        log.info("为用户生成图片{}的分享链接：{}", pictureId, shareLink);
+        return shareLink;
+    }
+
+    /**
+     * 获取用户统计数据
+     */
+    @Override
+    public Map<String, Object> getUserStats(Long userId) {
+        ThrowUtils.throwIf(userId == null || userId <= 0, ErrorCode.PARAMETER_ERROR, "用户ID不能为空");
+        Map<String, Object> stats = new HashMap<>();
+        // 获取用户点赞的图片数量
+        Long likedCount = userPictureActionMapper.countUserLikedPictures(userId);
+        stats.put("likedCount", likedCount != null ? likedCount : 0);
+        // 获取用户收藏的图片数量
+        Long collectedCount = userPictureActionMapper.countUserCollectedPictures(userId);
+        stats.put("collectedCount", collectedCount != null ? collectedCount : 0);
+        return stats;
     }
 }

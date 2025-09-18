@@ -51,7 +51,9 @@ import {
   PlusOutlined,
   UsergroupAddOutlined,
   PictureOutlined,
-  FileTextOutlined
+  FileTextOutlined,
+  HeartOutlined,
+  StarOutlined
 } from '@ant-design/icons-vue'
 import { useRouter } from 'vue-router'
 import { useLoginUserStore } from '@/stores/useLoginUserStore.ts'
@@ -81,8 +83,18 @@ const fixedMenuItems = [
   },
   {
     key: '/published_list',
-    label: '发布列表',
+    label: '我的发布',
     icon: () => h(FileTextOutlined),
+  },
+  {
+    key: '/liked_pictures',
+    label: '我的点赞',
+    icon: () => h(HeartOutlined),
+  },
+  {
+    key: '/collected_pictures',
+    label: '我的收藏',
+    icon: () => h(StarOutlined),
   },
   {
     key: '/add_space?type=' + SPACE_TYPE_ENUM.TEAM,

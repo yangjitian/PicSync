@@ -146,6 +146,11 @@ public class PictureVO implements Serializable {
     private Long shareCount;
 
     /**
+     * 下载量
+     */
+    private Long downloadCount;
+
+    /**
      * 分享量显示控制
      * true: 显示具体数字
      * false: 模糊显示或不显示

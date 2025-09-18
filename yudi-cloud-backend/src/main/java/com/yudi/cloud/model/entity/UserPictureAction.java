@@ -7,7 +7,7 @@ import java.io.Serializable;
 import java.util.Date;
 
 /**
- * 用户图片行为记录表
+ * 用户图片行为记录表（浏览/点赞/收藏/分享/下载）
  * @TableName user_picture_action
  */
 @TableName(value = "user_picture_action")
@@ -32,7 +32,7 @@ public class UserPictureAction implements Serializable {
     private Long pictureId;
 
     /**
-     * 互动类型：浏览/点赞/收藏/分享
+     * 互动类型：浏览/点赞/收藏/分享/下载
      */
     @TableField("action_type")
     private String actionType;

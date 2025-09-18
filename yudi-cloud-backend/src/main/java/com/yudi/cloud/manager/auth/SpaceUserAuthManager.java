@@ -3,6 +3,7 @@ package com.yudi.cloud.manager.auth;
 import cn.hutool.core.io.resource.ResourceUtil;
 import cn.hutool.core.util.StrUtil;
 import cn.hutool.json.JSONUtil;
+import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.yudi.cloud.manager.auth.model.SpaceUserAuthConfig;
 import com.yudi.cloud.manager.auth.model.SpaceUserPermissionConstant;
 import com.yudi.cloud.manager.auth.model.SpaceUserRole;
@@ -92,10 +93,10 @@ public class SpaceUserAuthManager {
                 }
             case TEAM:
                 // 团队空间，查询 SpaceUser 并获取角色和权限
-                SpaceUser spaceUser = spaceUserService.lambdaQuery()
-                        .eq(SpaceUser::getSpaceId, space.getId())
-                        .eq(SpaceUser::getUserId, loginUser.getId())
-                        .one();
+                QueryWrapper<SpaceUser> queryWrapper = new QueryWrapper<>();
+                queryWrapper.eq("spaceId", space.getId())
+                           .eq("userId", loginUser.getId());
+                SpaceUser spaceUser = spaceUserService.getOne(queryWrapper);
                 if (spaceUser == null) {
                     return new ArrayList<>();
                 } else {

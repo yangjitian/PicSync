@@ -9,6 +9,9 @@
             :alt="picture.name"
             :src="picture.thumbnailUrl ?? picture.url"
             class="picture-image"
+            @contextmenu.prevent
+            @dragstart.prevent
+            @selectstart.prevent
           />
         </template>
         
@@ -109,7 +112,7 @@
           </div>
         </template>
 
-        <!-- 简单布局模式 - 用于私人空间、发布列表、团队空间等 -->
+        <!-- 简单布局模式 - 用于私人空间、我的发布、团队空间等 -->
         <template v-else>
           <a-card-meta :title="picture.name || '未命名'" />
         </template>
@@ -117,7 +120,7 @@
 
         <!-- 操作按钮（仅在showOp为true时显示） -->
         <template v-if="showOp" #actions>
-          <ShareAltOutlined @click="(e) => doShare(picture, e)" />
+          <ShareAltOutlined @click="(e) => handleShare(picture, e)" />
           <SearchOutlined @click="(e) => doSearch(picture, e)" />
           <EditOutlined v-if="canEdit" @click="(e) => doEdit(picture, e)" />
           <DeleteOutlined v-if="canDelete" @click="(e) => doDelete(picture, e)" />
@@ -151,6 +154,7 @@ import {
   togglePictureLikeUsingPost,
   togglePictureCollectUsingPost,
   addPictureShareUsingPost,
+  generatePictureShareLinkUsingGet,
   getPictureUserActionUsingGet,
   batchGetPictureUserActionsUsingGet
 } from '@/api/pictureController.ts'
@@ -334,13 +338,6 @@ const doDelete = async (picture: API.PictureVO, e: Event) => {
 const shareModalRef = ref()
 const shareLink = ref<string>()
 
-const doShare = (picture: API.PictureVO, e: Event) => {
-  e.stopPropagation()
-  shareLink.value = `${window.location.protocol}//${window.location.host}/picture/${picture.id}`
-  if (shareModalRef.value) {
-    shareModalRef.value.openModal()
-  }
-}
 
 // --- Author Functions ---
 const getDefaultAvatar = (userName?: string) => {
@@ -498,15 +495,15 @@ const getPictureState = (pictureId: number | string | undefined): API.UserPictur
 }
 
 // 更新图片状态的辅助函数 - 确保Vue响应式更新正常工作
-const updatePictureState = async (pictureId: number | string | undefined, updates: Partial<API.UserPictureActionStatus & { animateLike?: boolean; animateCollect?: boolean; isLoading?: boolean }>) => {
+const updatePictureState = async (pictureId: number | string | undefined, updates: Partial<API.UserPictureActionStatus & { animateLike?: boolean; animateCollect?: boolean; isLoading?: boolean; shareCount?: number }>) => {
   // 参数校验
   if (!pictureId || (typeof pictureId !== 'number' && typeof pictureId !== 'string')) {
     return
   }
   
-  // 规范化 pictureId 为 number 类型
-  const id = typeof pictureId === 'string' ? parseInt(pictureId) : pictureId
-  if (isNaN(id) || id <= 0) {
+  // 保持 pictureId 的原始格式，避免精度丢失
+  const id = pictureId
+  if (!id || (typeof id === 'number' && id <= 0)) {
     return
   }
   
@@ -536,6 +533,14 @@ const updatePictureState = async (pictureId: number | string | undefined, update
     // 直接更新状态对象，确保响应式更新
     Object.assign(userActionStatus.value[id], newState)
     
+    // 如果更新了shareCount，同时更新图片列表中的数据
+    if (updates.shareCount !== undefined) {
+      const picture = props.dataList?.find(p => p.id === id)
+      if (picture) {
+        picture.shareCount = updates.shareCount
+      }
+    }
+    
     // 强制触发响应式更新
     triggerRef(userActionStatus)
     
@@ -554,10 +559,10 @@ const loadAllUserActionStatus = async () => {
     try {
       setSyncState(true)
       
-      // 提取所有有效的图片ID
+      // 提取所有有效的图片ID，支持字符串和数字类型
       const pictureIds = props.dataList
         .map(picture => picture.id)
-        .filter(id => id != null && typeof id === 'number')
+        .filter(id => id != null && (typeof id === 'number' || typeof id === 'string'))
         .join(',')
       
       if (pictureIds) {
@@ -568,8 +573,8 @@ const loadAllUserActionStatus = async () => {
           
           // 直接使用服务器数据更新本地状态，确保响应式更新
           for (const [pictureIdStr, status] of Object.entries(serverData)) {
-            const pictureId = parseInt(pictureIdStr)
-            if (!isNaN(pictureId) && pictureId > 0) {
+            const pictureId = pictureIdStr // 保持字符串格式，避免精度丢失
+            if (pictureId && pictureId.length > 0) {
               // 确保状态对象结构正确
               const validStatus: API.UserPictureActionStatus & { animateLike?: boolean; animateCollect?: boolean; isLoading?: boolean } = {
                 liked: status?.liked ?? false,
@@ -588,7 +593,7 @@ const loadAllUserActionStatus = async () => {
               Object.assign(userActionStatus.value[pictureId], validStatus)
               
               // 同时更新服务器数据到picture对象，确保页面刷新后状态正确
-              const picture = props.dataList.find(p => p.id === pictureId)
+              const picture = props.dataList.find(p => String(p.id) === pictureId)
               if (picture) {
                 (picture as any).liked = validStatus.liked as boolean
                 (picture as any).collected = validStatus.collected as boolean
@@ -877,33 +882,56 @@ const handleShare = async (picture: API.PictureVO, e: Event) => {
   e.stopPropagation()
   if (!picture.id) return
   
+  // 检查用户是否已登录
+  const currentUser = loginUserStore.loginUser
+  if (!currentUser?.id) {
+    message.warning('请先登录后再分享')
+    return
+  }
+  
   try {
+    // 显示加载状态
+    message.loading('正在生成分享链接...', 0)
     
-    // 记录操作前的计数
-    const originalCount = picture.shareCount || 0
+    // 先调用分享计数接口
+    const shareRes = await addPictureShareUsingPost(picture.id)
+    console.log('分享计数API响应:', shareRes)
     
-    // 发送请求到服务器
-    const res = await addPictureShareUsingPost(picture.id)
-    
-    if (res.data.code === 0) {
-      const responseData = res.data.data
-      const success = responseData?.success
-      const serverShareCount = responseData?.shareCount
+    if (shareRes.data.code === 0) {
+      // 分享计数成功，再生成分享链接
+      const linkRes = await generatePictureShareLinkUsingGet(picture.id)
       
-      // 更新计数
-      picture.shareCount = serverShareCount
+      console.log('分享链接API响应:', linkRes)
+      console.log('响应数据:', linkRes.data)
       
-      if (success) {
-        message.success('分享成功')
+      if (linkRes.data.code === 0) {
+        // 分享链接在message字段中，而不是data字段
+        const shareLinkFromServer = linkRes.data.message
+        console.log('分享链接:', shareLinkFromServer)
+        
+        // 设置分享链接并打开模态框
+        shareLink.value = shareLinkFromServer
+        if (shareModalRef.value) {
+          shareModalRef.value.openModal()
+        }
+        
+        message.destroy() // 清除加载消息
+        message.success('分享成功，链接已生成')
+        
+        // 更新图片的分享计数显示
+        if (shareRes.data.data && shareRes.data.data.shareCount !== undefined) {
+          await updatePictureState(picture.id, { shareCount: shareRes.data.data.shareCount })
+        }
       } else {
-        // 24小时内已分享过，不增加计数但提示分享成功
-        message.success('分享成功')
+        message.destroy() // 清除加载消息
+        message.error('生成分享链接失败: ' + linkRes.data.message)
       }
     } else {
-      // 请求失败，保持原始状态
-      message.error('分享失败')
+      message.destroy() // 清除加载消息
+      message.error('分享失败: ' + shareRes.data.message)
     }
   } catch (error: any) {
+    message.destroy() // 清除加载消息
     
     // 根据错误类型显示不同的提示
     if (error.message?.includes('timeout')) {
@@ -911,14 +939,8 @@ const handleShare = async (picture: API.PictureVO, e: Event) => {
     } else if (error.message?.includes('Network Error')) {
       message.error('网络错误，请稍后重试')
     } else {
-      message.error('分享失败，请稍后重试')
+      message.error('生成分享链接失败，请稍后重试')
     }
-  }
-  
-  // 无论成功失败都打开分享模态框
-  shareLink.value = `${window.location.protocol}//${window.location.host}/picture/${picture.id}`
-  if (shareModalRef.value) {
-    shareModalRef.value.openModal()
   }
 }
 
@@ -1011,6 +1033,16 @@ const getShareCountDisplay = (picture: API.PictureVO) => {
   width: 100%;
   height: auto;
   display: block;
+  user-select: none;
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  -webkit-user-drag: none;
+  -khtml-user-drag: none;
+  -moz-user-drag: none;
+  -o-user-drag: none;
+  user-drag: none;
+  pointer-events: none;
 }
 
 /* 图片标题样式 */

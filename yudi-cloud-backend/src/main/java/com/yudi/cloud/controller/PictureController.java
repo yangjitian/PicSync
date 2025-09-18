@@ -219,9 +219,7 @@ public class PictureController {
     @GetMapping("/tag_category")
     public BaseResponse<PictureTagCategoryVO> listPictureTagCategory() {
         PictureTagCategoryVO pictureTagCategoryVO = new PictureTagCategoryVO();
-        List<String> tagList = Arrays.asList("热门", "搞笑", "生活", "高清", "艺术", "校园", "背景", "简历", "创意");
-        List<String> category = Arrays.asList("模板", "电商", "表情包", "素材", "海报");
-        pictureTagCategoryVO.setTagList(tagList);
+        List<String> category = Arrays.asList("风景", "人物", "动物", "建筑", "美食","艺术","其他");
         pictureTagCategoryVO.setCategoryList(category);
         return Result.success(pictureTagCategoryVO);
     }
@@ -256,6 +254,26 @@ public class PictureController {
         String picColor = searchPictureByColorRequest.getPicColor();
         User loginUser = userService.getLoginUser(request);
         List<PictureVO> pictureVOList = pictureService.searchPictureByColor(spaceId, picColor, loginUser);
+        return Result.success(pictureVOList);
+    }
+
+    @PostMapping("/search/liked/color")
+    public BaseResponse<List<PictureVO>> searchLikedPicturesByColor(@RequestBody SearchPictureByColorRequest searchPictureByColorRequest,
+                                                                    HttpServletRequest request) {
+        ThrowUtils.throwIf(searchPictureByColorRequest == null, ErrorCode.PARAMETER_ERROR);
+        String picColor = searchPictureByColorRequest.getPicColor();
+        User loginUser = userService.getLoginUser(request);
+        List<PictureVO> pictureVOList = pictureService.searchLikedPicturesByColor(picColor, loginUser);
+        return Result.success(pictureVOList);
+    }
+
+    @PostMapping("/search/collected/color")
+    public BaseResponse<List<PictureVO>> searchCollectedPicturesByColor(@RequestBody SearchPictureByColorRequest searchPictureByColorRequest,
+                                                                        HttpServletRequest request) {
+        ThrowUtils.throwIf(searchPictureByColorRequest == null, ErrorCode.PARAMETER_ERROR);
+        String picColor = searchPictureByColorRequest.getPicColor();
+        User loginUser = userService.getLoginUser(request);
+        List<PictureVO> pictureVOList = pictureService.searchCollectedPicturesByColor(picColor, loginUser);
         return Result.success(pictureVOList);
     }
 
@@ -313,5 +331,25 @@ public class PictureController {
         
         // 获取封装类
         return Result.success(pictureService.getPictureVOPage(picturePage, request));
+    }
+
+    /**
+     * 获取用户点赞的图片列表（分页）
+     */
+    @PostMapping("/action/liked-pictures")
+    public BaseResponse<Page<PictureVO>> listLikedPicturesByPage(@RequestBody PictureQueryDTO pictureQueryDTO,
+                                                                   HttpServletRequest request) {
+        Page<PictureVO> pictureVOPage = pictureService.listLikedPicturesByPage(pictureQueryDTO, request);
+        return Result.success(pictureVOPage);
+    }
+
+    /**
+     * 获取用户收藏的图片列表（分页）
+     */
+    @PostMapping("/action/collected-pictures")
+    public BaseResponse<Page<PictureVO>> listCollectedPicturesByPage(@RequestBody PictureQueryDTO pictureQueryDTO,
+                                                                     HttpServletRequest request) {
+        Page<PictureVO> pictureVOPage = pictureService.listCollectedPicturesByPage(pictureQueryDTO, request);
+        return Result.success(pictureVOPage);
     }
 }
