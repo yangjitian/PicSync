@@ -19,14 +19,14 @@ public interface PictureActionService {
     Map<String, Object> addViewCount(Long pictureId, Long userId);
 
     /**
-     * 点赞/取消点赞
+     * 点赞/取消点赞（优化版本，直接返回状态和计数）
      */
-    boolean toggleLike(Long pictureId, Long userId);
+    Map<String, Object> toggleLikeWithCount(Long pictureId, Long userId);
 
     /**
-     * 收藏/取消收藏
+     * 收藏/取消收藏（优化版本，直接返回状态和计数）
      */
-    boolean toggleCollect(Long pictureId, Long userId);
+    Map<String, Object> toggleCollectWithCount(Long pictureId, Long userId);
 
     /**
      * 增加分享量（1小时内防重复）

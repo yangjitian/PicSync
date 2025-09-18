@@ -462,6 +462,10 @@ declare namespace API {
     likeCount?: number
     collectCount?: number
     shareCount?: number
+    showShareCount?: boolean
+    // 添加用户行为状态字段，确保页面刷新后状态正确显示
+    liked?: boolean
+    collected?: boolean
   }
 
   type SearchPictureByColorRequest = {
@@ -757,6 +761,29 @@ declare namespace API {
   type BaseResponseMapStringString_ = {
     code?: number
     data?: { [key: string]: string }
+    message?: string
+  }
+
+  type UserPictureActionStatus = {
+    liked?: boolean
+    collected?: boolean
+  }
+
+  type BaseResponseUserPictureActionStatus_ = {
+    code?: number
+    data?: UserPictureActionStatus
+    message?: string
+  }
+
+  type BaseResponseMapLongUserPictureActionStatus_ = {
+    code?: number
+    data?: Record<number, UserPictureActionStatus>
+    message?: string
+  }
+
+  type BaseResponseMapStringObject_ = {
+    code?: number
+    data?: { [key: string]: any }
     message?: string
   }
 }

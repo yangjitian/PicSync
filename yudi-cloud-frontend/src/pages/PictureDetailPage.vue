@@ -86,7 +86,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, h, onMounted, ref } from 'vue'
+import { computed, h, onMounted, onBeforeUnmount, ref } from 'vue'
 import { deletePictureUsingPost, getPictureVoByIdUsingGet } from '@/api/pictureController.ts'
 import { message } from 'ant-design-vue'
 import {
@@ -136,6 +136,23 @@ const fetchPictureDetail = async () => {
 
 onMounted(() => {
   fetchPictureDetail()
+  
+  // 监听窗口关闭事件，通知父页面刷新（仅在必要时）
+  const handleBeforeUnload = () => {
+    // 检查是否有数据变化需要刷新
+    const hasDataChanges = localStorage.getItem('hasDataChanges') === 'true'
+    if (hasDataChanges && window.opener) {
+      window.opener.dispatchEvent(new CustomEvent('refreshHomePage'))
+      localStorage.removeItem('hasDataChanges') // 清除标记
+    }
+  }
+  
+  window.addEventListener('beforeunload', handleBeforeUnload)
+  
+  // 清理事件监听器
+  onBeforeUnmount(() => {
+    window.removeEventListener('beforeunload', handleBeforeUnload)
+  })
 })
 
 const router = useRouter()
@@ -160,6 +177,9 @@ const doDelete = async () => {
   const res = await deletePictureUsingPost({ id })
   if (res.data.code === 0) {
     message.success('删除成功')
+    
+    // 标记数据有变化，需要刷新主页
+    localStorage.setItem('hasDataChanges', 'true')
     
     // 根据删除响应决定跳转目标
     const deleteResponse = res.data.data

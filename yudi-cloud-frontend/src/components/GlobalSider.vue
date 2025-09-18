@@ -126,7 +126,6 @@ const fetchTeamSpaceList = async () => {
     teamSpaceList.value = res.data.data
   } else {
     message.error('加载我的团队空间失败，' + res.data.message)
-    console.error('加载团队空间失败:', res.data.message)
   }
 }
 
@@ -192,7 +191,6 @@ const doMenuClick = ({ key }) => {
   // 正常路由跳转
   router.push(key).then(() => {
   }).catch((error) => {
-    console.error('GlobalSider 路由跳转失败:', error)
   })
 }
 </script>

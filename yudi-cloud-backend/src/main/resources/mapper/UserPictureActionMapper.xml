@@ -43,33 +43,6 @@
         AND status = 1
     </select>
 
-    <!-- 统计图片的点赞数量 -->
-    <select id="countLikesByPictureId" resultType="java.lang.Long">
-        SELECT COUNT(*)
-        FROM user_picture_action
-        WHERE picture_id = #{pictureId}
-        AND action_type = 'LIKE'
-        AND status = 1
-    </select>
-
-    <!-- 统计图片的收藏数量 -->
-    <select id="countCollectsByPictureId" resultType="java.lang.Long">
-        SELECT COUNT(*)
-        FROM user_picture_action
-        WHERE picture_id = #{pictureId}
-        AND action_type = 'COLLECT'
-        AND status = 1
-    </select>
-
-    <!-- 统计图片的分享数量 -->
-    <select id="countSharesByPictureId" resultType="java.lang.Long">
-        SELECT COUNT(*)
-        FROM user_picture_action
-        WHERE picture_id = #{pictureId}
-        AND action_type = 'SHARE'
-        AND status = 1
-    </select>
-
     <!-- 检查用户是否在今天浏览过该图片（从凌晨0点到23:59:59） -->
     <select id="checkUserViewedIn24Hours" resultType="java.lang.Boolean">
         SELECT COUNT(*) > 0

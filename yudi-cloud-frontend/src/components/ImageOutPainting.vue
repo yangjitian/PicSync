@@ -106,7 +106,6 @@ const startPolling = () => {
         }
       }
     } catch (error) {
-      console.error('扩图任务轮询失败', error)
       message.error('扩图任务轮询失败，' + error.message)
       // 清理轮询
       clearPolling()
@@ -151,7 +150,6 @@ const handleUpload = async () => {
       message.error('图片上传失败，' + res.data.message)
     }
   } catch (error) {
-    console.error('图片上传失败', error)
     message.error('图片上传失败，' + error.message)
   }
   uploadLoading.value = false

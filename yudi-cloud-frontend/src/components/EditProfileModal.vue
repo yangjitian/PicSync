@@ -171,7 +171,6 @@ const handleAvatarUpload = async ({ file }: any) => {
       message.error('头像上传失败，' + res.data.message)
     }
   } catch (error) {
-    console.error('头像上传失败:', error)
     message.error('头像上传失败，请稍后重试')
   } finally {
     avatarUploading.value = false
@@ -214,7 +213,6 @@ const handleSubmit = async () => {
       message.error(res.data.message || '更新失败')
     }
   } catch (error) {
-    console.error('更新个人资料失败:', error)
     message.error('更新失败，请稍后重试')
   } finally {
     loading.value = false

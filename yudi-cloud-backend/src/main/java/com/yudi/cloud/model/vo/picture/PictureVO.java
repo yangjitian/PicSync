@@ -131,6 +131,16 @@ public class PictureVO implements Serializable {
     private Long collectCount;
 
     /**
+     * 当前用户是否点赞
+     */
+    private boolean liked;
+
+    /**
+     * 当前用户是否收藏
+     */
+    private boolean collected;
+
+    /**
      * 分享量
      */
     private Long shareCount;

@@ -65,6 +65,7 @@
       :canEdit="true"
       :canDelete="true"
       :onReload="fetchData"
+      layoutMode="detailed"
     />
     
     <!-- 分页 -->
@@ -130,11 +131,9 @@ const fetchData = async () => {
       dataList.value = res.data.data.records || []
       total.value = res.data.data.total || 0
     } else {
-      console.error('PublishedListPage: 获取发布列表失败，响应:', res.data)
       message.error('获取发布列表失败，' + res.data.message)
     }
   } catch (error: any) {
-    console.error('PublishedListPage: 获取发布列表异常:', error)
     message.error('获取发布列表失败，' + error.message)
   } finally {
     loading.value = false

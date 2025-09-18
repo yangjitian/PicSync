@@ -215,7 +215,6 @@ const fetchTeamSpaceList = async () => {
     teamSpaceList.value = res.data.data
   } else {
     message.error('加载我的团队空间失败，' + res.data.message)
-    console.error('加载团队空间失败:', res.data.message)
   }
 }
 
@@ -254,8 +253,6 @@ const retryRefresh = (refreshFunctionName: string, maxRetries = 5, delay = 200) 
     retries++
     if (retries < maxRetries) {
       setTimeout(attemptRefresh, delay)
-    } else {
-      console.warn(`FloatingSidebar: ${refreshFunctionName} 函数在 ${maxRetries} 次重试后仍然不存在`)
     }
   }
   
@@ -271,7 +268,6 @@ const handlePageRefresh = async (event: Event) => {
       if ((window as any).refreshSpaceDetail) {
         (window as any).refreshSpaceDetail()
       } else {
-        console.warn('FloatingSidebar: refreshSpaceDetail 函数不存在，开始重试')
         retryRefresh('refreshSpaceDetail')
       }
       break
@@ -279,7 +275,6 @@ const handlePageRefresh = async (event: Event) => {
       if ((window as any).refreshPublishedList) {
         (window as any).refreshPublishedList()
       } else {
-        console.warn('FloatingSidebar: refreshPublishedList 函数不存在，开始重试')
         retryRefresh('refreshPublishedList')
       }
       break
@@ -287,7 +282,6 @@ const handlePageRefresh = async (event: Event) => {
       if ((window as any).refreshMySpace) {
         (window as any).refreshMySpace()
       } else {
-        console.warn('FloatingSidebar: refreshMySpace 函数不存在，开始重试')
         retryRefresh('refreshMySpace')
       }
       break
@@ -393,7 +387,9 @@ const doMenuClick = ({ key }: { key: string }) => {
   if (router.currentRoute.value.path === key) {
     
     // 根据不同的路由发送对应的刷新事件
-    if (key.startsWith('/space/')) {
+    if (key === '/') {
+      window.dispatchEvent(new CustomEvent('refreshHomePage'))
+    } else if (key.startsWith('/space/')) {
       window.dispatchEvent(new CustomEvent('refreshSpaceDetailPage'))
     } else if (key === '/published_list') {
       window.dispatchEvent(new CustomEvent('refreshPublishedListPage'))
@@ -416,7 +412,9 @@ const doMenuClick = ({ key }: { key: string }) => {
     
     // 路由跳转成功后，延迟发送对应的事件，确保目标页面已经加载
     setTimeout(() => {
-      if (key.startsWith('/space/')) {
+      if (key === '/') {
+        window.dispatchEvent(new CustomEvent('refreshHomePage'))
+      } else if (key.startsWith('/space/')) {
         window.dispatchEvent(new CustomEvent('refreshSpaceDetailPage'))
       } else if (key === '/published_list') {
         window.dispatchEvent(new CustomEvent('refreshPublishedListPage'))
@@ -425,7 +423,6 @@ const doMenuClick = ({ key }: { key: string }) => {
       }
     }, 100) // 延迟100ms确保页面完全加载
   }).catch((error) => {
-    console.error('路由跳转失败:', error)
   })
 }
 </script>

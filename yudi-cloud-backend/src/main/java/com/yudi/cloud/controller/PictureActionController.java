@@ -70,12 +70,8 @@ public class PictureActionController {
         User loginUser = userService.getLoginUser(request);
         ThrowUtils.throwIf(loginUser == null, ErrorCode.NOT_LOGIN_ERROR);
         
-        boolean liked = pictureActionService.toggleLike(pictureId, loginUser.getId());
-        
-        // 返回最新计数和状态
-        Map<String, Object> result = new HashMap<>();
-        result.put("liked", liked);
-        result.put("likeCount", userPictureActionMapper.countLikesByPictureId(pictureId));
+        // 直接返回操作结果，包含状态和计数
+        Map<String, Object> result = pictureActionService.toggleLikeWithCount(pictureId, loginUser.getId());
         
         return Result.success(result);
     }
@@ -93,12 +89,8 @@ public class PictureActionController {
         User loginUser = userService.getLoginUser(request);
         ThrowUtils.throwIf(loginUser == null, ErrorCode.NOT_LOGIN_ERROR);
         
-        boolean collected = pictureActionService.toggleCollect(pictureId, loginUser.getId());
-        
-        // 返回最新计数和状态
-        Map<String, Object> result = new HashMap<>();
-        result.put("collected", collected);
-        result.put("collectCount", userPictureActionMapper.countCollectsByPictureId(pictureId));
+        // 直接返回操作结果，包含状态和计数
+        Map<String, Object> result = pictureActionService.toggleCollectWithCount(pictureId, loginUser.getId());
         
         return Result.success(result);
     }

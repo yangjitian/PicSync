@@ -22,10 +22,12 @@ import com.yudi.cloud.manager.upload.FilePictureUpload;
 import com.yudi.cloud.manager.upload.PictureUploadTemplate;
 import com.yudi.cloud.manager.upload.UrlPictureUpload;
 import com.yudi.cloud.mapper.PictureMapper;
+import com.yudi.cloud.mapper.UserPictureActionMapper;
 import com.yudi.cloud.model.dto.picture.*;
 import com.yudi.cloud.model.entity.Picture;
 import com.yudi.cloud.model.entity.Space;
 import com.yudi.cloud.model.entity.User;
+import com.yudi.cloud.model.entity.UserPictureAction;
 import com.yudi.cloud.model.enums.PictureReviewStatusEnum;
 import com.yudi.cloud.model.enums.SpaceTypeEnum;
 import com.yudi.cloud.model.vo.picture.PictureVO;
@@ -72,6 +74,9 @@ public class PictureServiceImpl extends ServiceImpl<PictureMapper, Picture>
 
     @Resource
     private SpaceService spaceService;
+
+    @Resource
+    private UserPictureActionMapper userPictureActionMapper;
 
     @Resource
     private FilePictureUpload filePictureUpload;
@@ -389,7 +394,38 @@ public class PictureServiceImpl extends ServiceImpl<PictureMapper, Picture>
                         Function.identity(),          // 值提取器：用户对象本身
                         (existing, replacement) -> existing // 合并函数：处理键冲突（保留现有值）
                 ));
-        // 3.单次遍历完成实体转换和数据填充
+
+        // 3. 查询当前用户对这些图片的操作状态（点赞、收藏）
+        List<Long> pictureIdList = pictureList.stream().map(Picture::getId).collect(Collectors.toList());
+        User loginUser = userService.getLoginUser(request);
+        Set<Long> likedPictureIdSet = new HashSet<>();
+        Set<Long> collectedPictureIdSet = new HashSet<>();
+
+        if (loginUser != null && CollUtil.isNotEmpty(pictureIdList)) {
+            // 查询点赞记录
+            List<UserPictureAction> likeActions = userPictureActionMapper.selectList(
+                    new QueryWrapper<UserPictureAction>()
+                            .eq("user_id", loginUser.getId())
+                            .in("picture_id", pictureIdList)
+                            .eq("action_type", "LIKE")
+                            .eq("status", 1)
+            );
+            likedPictureIdSet = likeActions.stream().map(UserPictureAction::getPictureId).collect(Collectors.toSet());
+
+            // 查询收藏记录
+            List<UserPictureAction> collectActions = userPictureActionMapper.selectList(
+                    new QueryWrapper<UserPictureAction>()
+                            .eq("user_id", loginUser.getId())
+                            .in("picture_id", pictureIdList)
+                            .eq("action_type", "COLLECT")
+                            .eq("status", 1)
+            );
+            collectedPictureIdSet = collectActions.stream().map(UserPictureAction::getPictureId).collect(Collectors.toSet());
+        }
+
+        // 4.单次遍历完成实体转换和数据填充
+        final Set<Long> finalLikedPictureIdSet = likedPictureIdSet;
+        final Set<Long> finalCollectedPictureIdSet = collectedPictureIdSet;
         List<PictureVO> pictureVOList = pictureList.stream().map(picture -> {
             // entity -> vo
             PictureVO pictureVO = PictureVO.convertToPictureVO(picture);
@@ -402,6 +438,10 @@ public class PictureServiceImpl extends ServiceImpl<PictureMapper, Picture>
             
             // 设置分享量显示控制
             setShareCountDisplayControl(pictureVO, request);
+
+            // 设置当前用户的操作状态
+            pictureVO.setLiked(finalLikedPictureIdSet.contains(picture.getId()));
+            pictureVO.setCollected(finalCollectedPictureIdSet.contains(picture.getId()));
             
             return pictureVO;
         }).collect(Collectors.toList());
@@ -533,7 +573,6 @@ public class PictureServiceImpl extends ServiceImpl<PictureMapper, Picture>
             Elements possibleContainers = document.select("div, ul, ol");
             log.info("找到可能的容器元素数量: {}", possibleContainers.size());
             
-            // 输出页面的一部分HTML用于调试
             String pageHtml = document.html();
             log.info("页面HTML片段 (前1000字符): {}", 
                 pageHtml.length() > 1000 ? pageHtml.substring(0, 1000) + "..." : pageHtml);

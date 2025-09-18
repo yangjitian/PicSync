@@ -37,27 +37,6 @@ public interface UserPictureActionMapper extends BaseMapper<UserPictureAction> {
                                                           @Param("pictureIds") List<Long> pictureIds);
 
     /**
-     * 统计图片的点赞数量
-     * @param pictureId 图片ID
-     * @return 点赞数量
-     */
-    Long countLikesByPictureId(@Param("pictureId") Long pictureId);
-
-    /**
-     * 统计图片的收藏数量
-     * @param pictureId 图片ID
-     * @return 收藏数量
-     */
-    Long countCollectsByPictureId(@Param("pictureId") Long pictureId);
-
-    /**
-     * 统计图片的分享数量
-     * @param pictureId 图片ID
-     * @return 分享数量
-     */
-    Long countSharesByPictureId(@Param("pictureId") Long pictureId);
-
-    /**
      * 检查用户是否在今天浏览过该图片（从凌晨0点到23:59:59）
      * @param userId 用户ID
      * @param pictureId 图片ID

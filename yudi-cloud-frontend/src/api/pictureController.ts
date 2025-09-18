@@ -311,3 +311,89 @@ export async function uploadPictureByUrlUsingPost(
     ...(options || {}),
   })
 }
+
+// ==================== 图片行为相关接口 ====================
+
+/** 增加浏览量 POST /api/picture/action/view */
+export async function addPictureViewUsingPost(
+  pictureId: number,
+  options?: { [key: string]: any }
+) {
+  return request<API.BaseResponseMapStringObject_>('/api/picture/action/view', {
+    method: 'POST',
+    params: {
+      pictureId,
+    },
+    ...(options || {}),
+  })
+}
+
+/** 点赞/取消点赞 POST /api/picture/action/like */
+export async function togglePictureLikeUsingPost(
+  pictureId: number,
+  options?: { [key: string]: any }
+) {
+  return request<API.BaseResponseMapStringObject_>('/api/picture/action/like', {
+    method: 'POST',
+    params: {
+      pictureId,
+    },
+    ...(options || {}),
+  })
+}
+
+/** 收藏/取消收藏 POST /api/picture/action/collect */
+export async function togglePictureCollectUsingPost(
+  pictureId: number,
+  options?: { [key: string]: any }
+) {
+  return request<API.BaseResponseMapStringObject_>('/api/picture/action/collect', {
+    method: 'POST',
+    params: {
+      pictureId,
+    },
+    ...(options || {}),
+  })
+}
+
+/** 增加分享数 POST /api/picture/action/share */
+export async function addPictureShareUsingPost(
+  pictureId: number,
+  options?: { [key: string]: any }
+) {
+  return request<API.BaseResponseMapStringObject_>('/api/picture/action/share', {
+    method: 'POST',
+    params: {
+      pictureId,
+    },
+    ...(options || {}),
+  })
+}
+
+/** 获取用户对图片的行为状态 GET /api/picture/action/user-action */
+export async function getPictureUserActionUsingGet(
+  pictureId: number,
+  options?: { [key: string]: any }
+) {
+  return request<API.BaseResponseUserPictureActionStatus_>('/api/picture/action/user-action', {
+    method: 'GET',
+    params: {
+      pictureId,
+    },
+    ...(options || {}),
+  })
+}
+
+/** 批量获取用户对多张图片的行为状态 GET /api/picture/action/user-actions */
+export async function batchGetPictureUserActionsUsingGet(
+  pictureIds: string,
+  options?: { [key: string]: any }
+) {
+  return request<API.BaseResponseMapLongUserPictureActionStatus_>('/api/picture/action/user-actions', {
+    method: 'GET',
+    params: {
+      pictureIds,
+    },
+    ...(options || {}),
+  })
+}

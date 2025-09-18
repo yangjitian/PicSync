@@ -1,7 +1,6 @@
 package com.yudi.cloud.model.dto.picture;
 
-import io.swagger.annotations.ApiModel;
-import io.swagger.annotations.ApiModelProperty;
+import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 
 import java.io.Serializable;
@@ -11,7 +10,7 @@ import java.io.Serializable;
  * 只包含必要的参数，避免Swagger生成过多不必要的参数
  */
 @Data
-@ApiModel(description = "图片上传请求")
+@Schema(description = "图片上传请求")
 public class PictureUploadRequest implements Serializable {
 
     /**

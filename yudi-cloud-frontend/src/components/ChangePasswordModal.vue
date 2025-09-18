@@ -249,7 +249,6 @@ const handleSubmit = async () => {
       message.error(res.data.message || '密码修改失败')
     }
   } catch (error) {
-    console.error('修改密码失败:', error)
     message.error('修改失败，请稍后重试')
   } finally {
     loading.value = false

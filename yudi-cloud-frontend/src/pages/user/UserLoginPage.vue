@@ -104,7 +104,6 @@ const getCaptcha = async () => {
       message.error('获取验证码数据失败');
     }
   } catch (error) {
-    console.error("Failed to get captcha:", error);
     message.error('获取验证码请求失败');
   }
 };
@@ -135,7 +134,6 @@ const handleSubmit = async (values: any) => {
       getCaptcha();
     }
   } catch (error) {
-    console.error('登录错误:', error);
     message.error('登录失败，请稍后重试');
     getCaptcha();
   } finally {

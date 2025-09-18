@@ -127,7 +127,6 @@ const sendCode = async () => {
       isSending.value = false;
     }
   } catch (error) {
-    console.error('验证码发送错误:', error);
     message.error('验证码发送失败，请稍后重试');
     isSending.value = false;
   }
@@ -152,7 +151,6 @@ const handleSubmit = async (values: any) => {
       message.error('注册失败，' + (res.data?.message || '未知错误'));
     }
   } catch (error) {
-    console.error('注册错误:', error);
     message.error('注册失败，请稍后重试');
   } finally {
     loading.value = false;

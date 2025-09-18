@@ -57,6 +57,7 @@
       :canEdit="canEditPicture"
       :canDelete="canDeletePicture"
       :onReload="fetchData"
+      layoutMode="detailed"
     />
     <!-- 分页 -->
     <a-pagination
@@ -176,7 +177,6 @@ const fetchData = async () => {
     dataList.value = res.data.data.records ?? []
     total.value = res.data.data.total ?? 0
   } else {
-    console.error('SpaceDetailPage: 获取图片列表失败，响应:', res.data)
     message.error('获取数据失败，' + res.data.message)
   }
   loading.value = false

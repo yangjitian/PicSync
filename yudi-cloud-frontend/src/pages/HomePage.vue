@@ -20,7 +20,12 @@
     </div>
     <!-- 图片列表 -->
     <div class="picture-list-container">
-      <PictureList :dataList="dataList" :loading="loading && searchParams.current === 1" layoutMode="detailed" />
+      <PictureList 
+        :dataList="dataList" 
+        :loading="loading && searchParams.current === 1" 
+        layoutMode="detailed"
+        @picture-click="handlePictureClick"
+      />
     </div>
     <!-- 加载更多提示 -->
     <div v-if="loading && searchParams.current > 1" style="text-align: center; padding: 20px;">
@@ -33,11 +38,12 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, onBeforeUnmount, reactive, ref, watch } from 'vue'
+import { onMounted, onBeforeUnmount, onActivated, reactive, ref, watch, nextTick } from 'vue'
 import { useRoute } from 'vue-router'
 import {
   listPictureTagCategoryUsingGet,
   listPictureVoByPageUsingPost,
+  addPictureViewUsingPost,
 } from '@/api/pictureController.ts'
 import { message } from 'ant-design-vue'
 import PictureList from '@/components/PictureList.vue'
@@ -172,6 +178,91 @@ onMounted(() => {
   fetchData() // 初始加载
   setupObserver()
 })
+
+// 页面激活时刷新数据（仅在必要时）
+onActivated(() => {
+  // 只在数据可能过期时才刷新
+  const now = Date.now()
+  const lastRefreshTime = localStorage.getItem('lastDataRefresh') || '0'
+  const timeSinceLastRefresh = now - parseInt(lastRefreshTime)
+  
+  // 如果超过5分钟没有刷新，或者没有刷新记录，则刷新数据
+  if (timeSinceLastRefresh > 5 * 60 * 1000 || lastRefreshTime === '0') {
+    nextTick(() => {
+      doSearch() // 重新搜索会清空数据并重新加载
+      localStorage.setItem('lastDataRefresh', now.toString())
+    })
+  }
+  
+  // 总是刷新用户行为状态（这个比较轻量）
+  if (pictureListRef.value) {
+    pictureListRef.value.forceRefreshUserActionStatus()
+  }
+})
+
+// 添加强制刷新函数，供外部调用
+const forceRefresh = () => {
+  doSearch()
+}
+
+// 将刷新函数暴露到全局，供其他组件调用
+;(window as any).refreshHomePage = forceRefresh
+
+// 监听全局刷新事件（仅在必要时）
+const handleGlobalRefresh = () => {
+  const now = Date.now()
+  const lastRefreshTime = localStorage.getItem('lastDataRefresh') || '0'
+  const timeSinceLastRefresh = now - parseInt(lastRefreshTime)
+  
+  // 如果超过2分钟没有刷新，才执行刷新
+  if (timeSinceLastRefresh > 2 * 60 * 1000) {
+    nextTick(() => {
+      doSearch()
+      localStorage.setItem('lastDataRefresh', now.toString())
+    })
+  }
+}
+
+// 添加全局事件监听
+onMounted(() => {
+  window.addEventListener('refreshHomePage', handleGlobalRefresh)
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('refreshHomePage', handleGlobalRefresh)
+})
+
+// --- 图片点击处理 ---
+const handlePictureClick = async (picture: API.PictureVO) => {
+  // 增加浏览量（今天内防重复，从凌晨0点到23:59:59）
+  if (picture.id) {
+    try {
+      const res = await addPictureViewUsingPost(picture.id)
+      if (res.data.code === 0) {
+        const responseData = res.data.data
+        const success = responseData.success
+        const serverViewCount = responseData.viewCount
+        
+        // 智能UI更新：基于服务器响应
+        const pictureIndex = dataList.value.findIndex(p => p.id === picture.id)
+        if (pictureIndex !== -1) {
+          if (success) {
+            // 成功增加浏览量，使用服务器计数
+            dataList.value[pictureIndex].viewCount = serverViewCount
+          } else {
+            // 今天已浏览过，使用服务器计数
+            dataList.value[pictureIndex].viewCount = serverViewCount
+          }
+        }
+      }
+    } catch (error) {
+      // 网络错误时保持当前状态，不进行UI更新
+    }
+  }
+  
+  // 跳转到详情页
+  window.open(`/picture/${picture.id}`, '_blank')
+}
 
 onBeforeUnmount(() => {
   if (observer) {

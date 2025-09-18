@@ -353,7 +353,6 @@ const isVipExpired = computed(() => {
   try {
     return new Date(userInfo.value.vipExpireTime) < new Date()
   } catch (error) {
-    console.error('VIP过期时间解析错误:', error)
     return true
   }
 })
@@ -376,7 +375,6 @@ const fetchUserInfo = async () => {
     }
   } catch (error) {
     message.error('获取用户信息失败')
-    console.error('获取用户信息失败:', error)
   } finally {
     loading.value = false
   }
@@ -484,7 +482,6 @@ const handleExchange = async () => {
       message.error(res.data.message || '兑换失败，请检查兑换码是否正确')
     }
   } catch (error) {
-    console.error('兑换失败:', error)
     message.error('兑换失败，请稍后重试')
   } finally {
     exchanging.value = false
@@ -775,7 +772,7 @@ onMounted(() => {
 
 /* 确保管理员描述列表有足够的底部间距 */
 .admin-card :deep(.ant-descriptions) {
-  margin-bottom: 20px;
+  margin-bottom: 25px;
 }
 
 /* VIP用户卡片样式 */
