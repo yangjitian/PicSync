@@ -67,4 +67,12 @@ public interface PictureActionService {
      * @return 用户统计数据
      */
     Map<String, Object> getUserStats(Long userId);
+
+    /**
+     * 检查用户对图片的下载限制状态
+     * @param pictureId 图片ID
+     * @param userId 用户ID
+     * @return 下载限制状态信息
+     */
+    Map<String, Object> checkDownloadLimit(Long pictureId, Long userId);
 }

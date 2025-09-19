@@ -75,8 +75,13 @@
           </a-descriptions>
           <!-- 图片操作 -->
           <a-space wrap>
-            <a-button type="primary" @click="doDownload" :loading="downloadLoading">
-              免费下载
+            <a-button 
+              type="primary" 
+              @click="doDownload" 
+              :loading="downloadLoading"
+              :disabled="downloadLimitInfo.isLimited"
+            >
+              {{ downloadLimitInfo.isLimited ? '今日下载已达上限' : '免费下载' }}
               <template #icon>
                 <DownloadOutlined />
               </template>
@@ -100,7 +105,7 @@
 
 <script setup lang="ts">
 import { computed, h, onMounted, onBeforeUnmount, ref } from 'vue'
-import { deletePictureUsingPost, getPictureVoByIdUsingGet, generatePictureShareLinkUsingGet, addPictureShareUsingPost, addPictureDownloadUsingPost } from '@/api/pictureController.ts'
+import { deletePictureUsingPost, getPictureVoByIdUsingGet, generatePictureShareLinkUsingGet, addPictureShareUsingPost, addPictureDownloadUsingPost, checkPictureDownloadLimitUsingGet } from '@/api/pictureController.ts'
 import { message } from 'ant-design-vue'
 import {
   DeleteOutlined,
@@ -121,6 +126,17 @@ interface Props {
 const props = defineProps<Props>()
 const picture = ref<API.PictureVO>({})
 const downloadLoading = ref(false)
+const downloadLimitInfo = ref<{
+  todayDownloadCount: number
+  maxDailyDownloads: number
+  isLimited: boolean
+  remainingDownloads: number
+}>({
+  todayDownloadCount: 0,
+  maxDailyDownloads: 3,
+  isLimited: false,
+  remainingDownloads: 3
+})
 
 // 通用权限检查函数
 function createPermissionChecker(permission: string) {
@@ -144,11 +160,38 @@ const fetchPictureDetail = async () => {
     })
     if (res.data.code === 0 && res.data.data) {
       picture.value = res.data.data
+      // 获取图片详情后检查下载限制
+      await checkDownloadLimit()
     } else {
       message.error('获取图片详情失败，' + res.data.message)
     }
   } catch (e: any) {
     message.error('获取图片详情失败：' + e.message)
+  }
+}
+
+// 检查下载限制状态
+const checkDownloadLimit = async () => {
+  if (!picture.value.id) return
+  
+  try {
+    const res = await checkPictureDownloadLimitUsingGet(picture.value.id)
+    if (res.data.code === 0 && res.data.data) {
+      const data = res.data.data as {
+        todayDownloadCount: number
+        maxDailyDownloads: number
+        isLimited: boolean
+        remainingDownloads: number
+      }
+      downloadLimitInfo.value = {
+        todayDownloadCount: data.todayDownloadCount || 0,
+        maxDailyDownloads: data.maxDailyDownloads || 3,
+        isLimited: data.isLimited || false,
+        remainingDownloads: data.remainingDownloads || 0
+      }
+    }
+  } catch (e: any) {
+    console.error('检查下载限制失败:', e)
   }
 }
 
@@ -281,6 +324,18 @@ const doDownload = async () => {
     return
   }
   
+  // 检查下载限制
+  if (downloadLimitInfo.value.isLimited) {
+    message.warning('今日下载次数已达上限(3次)，请明天再试')
+    return
+  }
+  
+  // 防连点检查
+  if (downloadLoading.value) {
+    message.warning('下载正在进行中，请稍候...')
+    return
+  }
+  
   try {
     downloadLoading.value = true
     
@@ -288,13 +343,29 @@ const doDownload = async () => {
     const res = await addPictureDownloadUsingPost(picture.value.id)
     
     if (res.data.code === 0) {
-      // 下载量统计成功，执行实际下载
+      const responseData = res.data.data
+      
+      // 检查是否被限制
+      if (responseData?.limited) {
+        message.warning('今日下载次数已达上限(3次)，但图片仍可正常下载')
+      } else {
+        // 显示今日下载次数提示
+        const todayCount = responseData?.todayDownloadCount || 1
+        if (todayCount >= 2) {
+          message.warning(`今日已下载${todayCount}次，剩余${3 - todayCount}次统计机会`)
+        }
+      }
+      
+      // 执行实际下载
       downloadImage(picture.value.url, picture.value.name || '图片')
       
       // 更新图片的下载量显示
-      if (res.data.data && res.data.data.downloadCount !== undefined) {
-        (picture.value as any).downloadCount = res.data.data.downloadCount
+      if (responseData?.downloadCount !== undefined) {
+        (picture.value as any).downloadCount = responseData.downloadCount
       }
+      
+      // 更新下载限制状态
+      await checkDownloadLimit()
       
       message.success('下载成功')
     } else {

@@ -24,7 +24,10 @@ import org.springframework.transaction.annotation.Transactional;
 
 import javax.annotation.Resource;
 import javax.servlet.http.HttpServletRequest;
+import java.time.Duration;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
@@ -368,8 +371,7 @@ public class PictureActionServiceImpl implements PictureActionService {
     }
 
     /**
-     * 增加下载量（仅统计下载次数，不记录用户信息）
-     * 每次下载都会增加下载量，不设防重复限制
+     * 增加下载量（防刷机制：同一用户同一图片每天最多统计3次下载）
      */
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -377,6 +379,39 @@ public class PictureActionServiceImpl implements PictureActionService {
         ThrowUtils.throwIf(pictureId == null || pictureId <= 0, ErrorCode.PARAMETER_ERROR, "图片ID不能为空");
         ThrowUtils.throwIf(userId == null || userId <= 0, ErrorCode.PARAMETER_ERROR, "用户ID不能为空");
 
+        // 防刷机制：检查用户今日下载次数
+        String downloadLimitKey = "download_limit:" + userId + ":" + pictureId + ":" + LocalDate.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd"));
+        String downloadCountStr = stringRedisTemplate.opsForValue().get(downloadLimitKey);
+        
+        int todayDownloadCount = 0;
+        if (downloadCountStr != null) {
+            try {
+                todayDownloadCount = Integer.parseInt(downloadCountStr);
+            } catch (NumberFormatException e) {
+                log.warn("解析下载次数失败: {}", downloadCountStr);
+            }
+        }
+        
+        // 每天最多统计3次下载
+        if (todayDownloadCount >= 3) {
+            log.info("用户{}今日对图片{}的下载次数已达上限(3次)，跳过统计", userId, pictureId);
+            // 返回当前下载数，但不增加
+            Long cachedDownloadCount = getCountFromCache(PICTURE_DOWNLOAD_COUNT_CACHE_KEY, pictureId);
+            if (cachedDownloadCount == null) {
+                Picture picture = pictureService.getById(pictureId);
+                cachedDownloadCount = picture != null ? picture.getDownloadCount() : 0L;
+            }
+            
+            Map<String, Object> result = new HashMap<>();
+            result.put("success", true);
+            result.put("downloadCount", cachedDownloadCount);
+            result.put("limited", true); // 标记是否被限制
+            return result;
+        }
+        
+        // 增加今日下载计数
+        stringRedisTemplate.opsForValue().set(downloadLimitKey, String.valueOf(todayDownloadCount + 1), Duration.ofDays(1));
+        
         // 增加图片的下载数
         updatePictureCount("downloadCount", pictureId, 1);
 
@@ -399,8 +434,10 @@ public class PictureActionServiceImpl implements PictureActionService {
         Map<String, Object> result = new HashMap<>();
         result.put("success", true);
         result.put("downloadCount", cachedDownloadCount);
+        result.put("limited", false); // 标记未被限制
+        result.put("todayDownloadCount", todayDownloadCount + 1); // 今日下载次数
 
-        log.info("图片{}下载数+1，当前下载数：{}", pictureId, cachedDownloadCount);
+        log.info("图片{}下载数+1，当前下载数：{}，用户{}今日下载次数：{}", pictureId, cachedDownloadCount, userId, todayDownloadCount + 1);
 
         return result;
     }
@@ -550,5 +587,28 @@ public class PictureActionServiceImpl implements PictureActionService {
         Long collectedCount = userPictureActionMapper.countUserCollectedPictures(userId);
         stats.put("collectedCount", collectedCount != null ? collectedCount : 0);
         return stats;
+    }
+
+    @Override
+    public Map<String, Object> checkDownloadLimit(Long pictureId, Long userId) {
+        ThrowUtils.throwIf(pictureId == null || pictureId <= 0, ErrorCode.PARAMETER_ERROR, "图片ID不能为空");
+        ThrowUtils.throwIf(userId == null || userId <= 0, ErrorCode.PARAMETER_ERROR, "用户ID不能为空");
+
+        // 防刷机制：检查用户今日下载次数
+        String downloadLimitKey = "download_limit:" + userId + ":" + pictureId + ":" + LocalDate.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd"));
+        String downloadCountStr = stringRedisTemplate.opsForValue().get(downloadLimitKey);
+        
+        int todayDownloadCount = 0;
+        if (downloadCountStr != null) {
+            todayDownloadCount = Integer.parseInt(downloadCountStr);
+        }
+        
+        Map<String, Object> result = new HashMap<>();
+        result.put("todayDownloadCount", todayDownloadCount);
+        result.put("maxDailyDownloads", 3);
+        result.put("isLimited", todayDownloadCount >= 3);
+        result.put("remainingDownloads", Math.max(0, 3 - todayDownloadCount));
+        
+        return result;
     }
 }

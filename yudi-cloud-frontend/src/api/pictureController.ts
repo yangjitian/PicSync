@@ -414,6 +414,20 @@ export async function addPictureDownloadUsingPost(
   })
 }
 
+/** 检查下载限制 GET /api/picture/action/download-limit */
+export async function checkPictureDownloadLimitUsingGet(
+  pictureId: number,
+  options?: { [key: string]: any }
+) {
+  return request<API.BaseResponseMapStringObject_>('/api/picture/action/download-limit', {
+    method: 'GET',
+    params: {
+      pictureId,
+    },
+    ...(options || {}),
+  })
+}
+
 /** 生成图片分享链接 GET /api/picture/action/share-link/{pictureId} */
 export async function generatePictureShareLinkUsingGet(
   pictureId: number,

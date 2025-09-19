@@ -318,14 +318,27 @@ const searchParams = ref({
   color: ''
 })
 
-// 操作状态管理
+// 操作状态管理 - 增强防连点机制
 const operationStatus = ref<Record<string, { isLoading: boolean }>>({})
+const operationTimers = ref<Record<string, number>>({})
 
 // 计算属性
 const isOperationInProgress = (pictureId: number | string | undefined, operation: 'like' | 'collect'): boolean => {
   if (!pictureId) return false
   const state = operationStatus.value[pictureId]
-  return state?.isLoading || false
+  const timerKey = `${pictureId}-${operation}`
+  
+  // 检查是否正在加载中（操作进行中）
+  if (state?.isLoading) {
+    return true
+  }
+  
+  // 检查是否在冷却时间内
+  if (operationTimers.value[timerKey]) {
+    return true
+  }
+  
+  return false
 }
 
 // 设置操作状态
@@ -335,6 +348,24 @@ const setOperationState = (pictureId: number | string | undefined, operation: 'l
     operationStatus.value[pictureId] = { isLoading: false }
   }
   operationStatus.value[pictureId].isLoading = isLoading
+  
+  const timerKey = `${pictureId}-${operation}`
+  
+  if (isLoading) {
+    // 操作开始时，清理之前的冷却定时器（如果有的话）
+    if (operationTimers.value[timerKey]) {
+      clearTimeout(operationTimers.value[timerKey])
+      delete operationTimers.value[timerKey]
+    }
+  } else {
+    // 操作完成时，开始冷却时间
+    if (operationTimers.value[timerKey]) {
+      clearTimeout(operationTimers.value[timerKey])
+    }
+    operationTimers.value[timerKey] = setTimeout(() => {
+      delete operationTimers.value[timerKey]
+    }, 3000) // 3秒冷却时间
+  }
 }
 
     // 加载数据
@@ -491,6 +522,12 @@ const goToPublicGallery = () => {
 const handleToggleLike = async (picture: API.PictureVO) => {
   if (!picture.id) return
   
+  // 检查操作是否正在进行 - 增强防连点检查
+  if (isOperationInProgress(picture.id, 'like')) {
+    message.warning('请勿频繁操作，请稍后再试')
+    return
+  }
+  
   try {
     setOperationState(picture.id, 'like', true)
     const res = await togglePictureLikeUsingPost(picture.id)
@@ -514,6 +551,12 @@ const handleToggleLike = async (picture: API.PictureVO) => {
 // 取消收藏
 const handleUncollect = async (picture: API.PictureVO) => {
   if (!picture.id) return
+  
+  // 检查操作是否正在进行 - 增强防连点检查
+  if (isOperationInProgress(picture.id, 'collect')) {
+    message.warning('请勿频繁操作，请稍后再试')
+    return
+  }
   
   try {
     setOperationState(picture.id, 'collect', true)

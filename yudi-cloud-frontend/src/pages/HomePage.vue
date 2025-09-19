@@ -24,7 +24,7 @@
             class="sort-select"
             :get-popup-container="getPopupContainer"
           >
-            <a-select-option value="createTime">时间</a-select-option>
+            <a-select-option value="createTime">默认</a-select-option>
             <a-select-option value="likeCount">点赞数</a-select-option>
             <a-select-option value="viewCount">浏览量</a-select-option>
             <a-select-option value="collectCount">收藏数</a-select-option>

@@ -129,6 +129,22 @@ public class PictureActionController {
     }
 
     /**
+     * 检查用户对图片的下载限制状态
+     *
+     * @param pictureId 图片ID
+     * @param request   HTTP请求
+     * @return 下载限制状态信息
+     */
+    @GetMapping("/download-limit")
+    public BaseResponse<Map<String, Object>> checkDownloadLimit(@RequestParam Long pictureId, HttpServletRequest request) {
+        ThrowUtils.throwIf(pictureId == null || pictureId <= 0, ErrorCode.PARAMETER_ERROR, "图片ID不能为空");
+        User loginUser = userService.getLoginUser(request);
+        ThrowUtils.throwIf(loginUser == null, ErrorCode.NOT_LOGIN_ERROR);
+        Map<String, Object> result = pictureActionService.checkDownloadLimit(pictureId, loginUser.getId());
+        return Result.success(result);
+    }
+
+    /**
      * 获取用户对图片的行为状态
      *
      * @param pictureId 图片ID

@@ -17,7 +17,6 @@ import com.yudi.cloud.exception.BusinessException;
 import com.yudi.cloud.exception.ErrorCode;
 import com.yudi.cloud.exception.ThrowUtils;
 import com.yudi.cloud.manager.auth.SpaceUserAuthManager;
-import com.yudi.cloud.manager.auth.StpKit;
 import com.yudi.cloud.manager.auth.annotation.SaSpaceCheckPermission;
 import com.yudi.cloud.manager.auth.model.SpaceUserPermissionConstant;
 import com.yudi.cloud.model.dto.picture.*;
