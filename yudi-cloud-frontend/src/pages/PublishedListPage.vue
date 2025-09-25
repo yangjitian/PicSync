@@ -65,7 +65,8 @@
       :canEdit="true"
       :canDelete="true"
       :onReload="fetchData"
-      layoutMode="detailed"
+      layoutMode="simple"
+      displayMode="grid"
       @picture-click="handlePictureClick"
     />
     
@@ -77,6 +78,7 @@
       :total="total"
       :show-size-changer="true"
       :show-quick-jumper="true"
+        :page-size-options="['8', '12', '16', '20']"
       :show-total="(total: number, range: [number, number]) => `第 ${range[0]}-${range[1]} 条/共 ${total} 条`"
       @change="onPageChange"
     />
@@ -96,6 +98,7 @@ import {
   PIC_REVIEW_STATUS_OPTIONS
 } from '@/constants/picture.ts'
 import PictureList from '@/components/PictureList.vue'
+import { onPictureUploaded } from '@/utils/crossPageCommunication'
 
 const router = useRouter()
 const route = useRoute()
@@ -120,8 +123,8 @@ const searchParams = reactive<API.PictureQueryRequest>({
 })
 
 // 标签和分类选项
-const categoryOptions = ref<string[]>([])
-const tagOptions = ref<string[]>([])
+const categoryOptions = ref<Array<{label: string, value: string}>>([])
+const tagOptions = ref<Array<{label: string, value: string}>>([])
 
 // 获取数据
 const fetchData = async () => {
@@ -217,6 +220,9 @@ onMounted(() => {
       sendPageRefreshEvent()
     })
   }
+  
+  // 监听图片上传事件
+  onPictureUploaded(handlePictureUploaded)
 })
 
 // 监听路由变化，重新加载数据
@@ -284,6 +290,20 @@ const sendPageRefreshEvent = () => {
   nextTick(() => {
     window.dispatchEvent(new CustomEvent('refreshPublishedListPage'))
   })
+}
+
+// 处理图片上传事件
+const handlePictureUploaded = (event: any) => {
+  const { pictureId, data: pictureData } = event
+  console.log('PublishedListPage 收到图片上传事件:', pictureId, pictureData)
+  
+  // 刷新数据以显示新上传的图片
+  if (checkLogin()) {
+    nextTick(() => {
+      fetchData()
+      console.log('PublishedListPage 已刷新数据')
+    })
+  }
 }
 
 // --- 图片点击处理 ---

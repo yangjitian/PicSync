@@ -1,20 +1,18 @@
 package com.yudi.cloud.service.impl;
 
-import cn.hutool.core.collection.CollUtil;
 import cn.hutool.core.util.StrUtil;
-import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
-import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.yudi.cloud.exception.BusinessException;
 import com.yudi.cloud.exception.ErrorCode;
 import com.yudi.cloud.exception.ThrowUtils;
-import com.yudi.cloud.mapper.PictureMapper;
+import com.yudi.cloud.manager.recommend.PictureRecommendationServiceImpl;
+import com.yudi.cloud.manager.recommend.RedisRankServiceImpl;
 import com.yudi.cloud.mapper.UserPictureActionMapper;
 import com.yudi.cloud.model.entity.Picture;
 import com.yudi.cloud.model.entity.UserPictureAction;
-import com.yudi.cloud.model.vo.picture.PictureVO;
 import com.yudi.cloud.model.vo.picture.UserPictureActionStatus;
 import com.yudi.cloud.service.PictureActionService;
 import com.yudi.cloud.service.PictureService;
+import com.yudi.cloud.utils.TimeUtils;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -27,13 +25,12 @@ import javax.servlet.http.HttpServletRequest;
 import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
-import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
-import java.util.stream.Collectors;
 
 import static java.time.Duration.between;
 
@@ -54,13 +51,16 @@ public class PictureActionServiceImpl implements PictureActionService {
     private PictureService pictureService;
 
     @Resource
-    private PictureMapper pictureMapper;
-
-    @Resource
     private StringRedisTemplate stringRedisTemplate;
 
     @Resource
     private JdbcTemplate jdbcTemplate;
+
+    @Resource
+    private PictureRecommendationServiceImpl recommendationServiceImpl;
+
+    @Resource
+    private RedisRankServiceImpl redisRankServiceImpl;
 
     // 移动端访问配置
     @Value("${mobile.frontend-url:http://localhost:5173}")
@@ -117,8 +117,8 @@ public class PictureActionServiceImpl implements PictureActionService {
                 viewAction.setPictureId(pictureId);
                 viewAction.setActionType("VIEW");
                 viewAction.setStatus(1);
-                viewAction.setCreateTime(new Date());
-                viewAction.setUpdateTime(new Date());
+                viewAction.setCreateTime(TimeUtils.getCurrentBeijingTime());
+                viewAction.setUpdateTime(TimeUtils.getCurrentBeijingTime());
                 userPictureActionMapper.insert(viewAction);
 
                 updatePictureCount("viewCount", pictureId, 1);
@@ -191,7 +191,7 @@ public class PictureActionServiceImpl implements PictureActionService {
         if (existingAction != null) {
             // 已存在记录：切换状态
             existingAction.setStatus(newLikedState ? 1 : 0);
-            existingAction.setUpdateTime(new Date());
+            existingAction.setUpdateTime(TimeUtils.getCurrentBeijingTime());
             userPictureActionMapper.updateById(existingAction);
 
             // 更新点赞数
@@ -207,14 +207,17 @@ public class PictureActionServiceImpl implements PictureActionService {
             newAction.setPictureId(pictureId);
             newAction.setActionType("LIKE");
             newAction.setStatus(1);
-            newAction.setCreateTime(new Date());
-            newAction.setUpdateTime(new Date());
+            newAction.setCreateTime(TimeUtils.getCurrentBeijingTime());
+            newAction.setUpdateTime(TimeUtils.getCurrentBeijingTime());
             userPictureActionMapper.insert(newAction);
 
             // 增加点赞数
             picture.setLikeCount(picture.getLikeCount() + 1);
         }
 
+        // 更新编辑时间，确保定时任务能检测到变化
+        picture.setEditTime(TimeUtils.getCurrentBeijingTime());
+        
         // 保存更新后的图片信息
         pictureService.updateById(picture);
         newLikeCount = picture.getLikeCount();
@@ -222,6 +225,9 @@ public class PictureActionServiceImpl implements PictureActionService {
         // 清理缓存
         stringRedisTemplate.delete(LIKE_REDIS_PREFIX + userId + ":" + pictureId);
         stringRedisTemplate.delete(PICTURE_LIKE_COUNT_CACHE_KEY);
+
+        // 异步更新推荐分数
+        updateRecommendScoreAsync(picture);
 
         // 返回结果
         Map<String, Object> result = new HashMap<>();
@@ -261,7 +267,7 @@ public class PictureActionServiceImpl implements PictureActionService {
         if (existingAction != null) {
             // 已存在记录：切换状态
             existingAction.setStatus(newCollectedState ? 1 : 0);
-            existingAction.setUpdateTime(new Date());
+            existingAction.setUpdateTime(TimeUtils.getCurrentBeijingTime());
             userPictureActionMapper.updateById(existingAction);
 
             // 更新收藏数
@@ -277,14 +283,17 @@ public class PictureActionServiceImpl implements PictureActionService {
             newAction.setPictureId(pictureId);
             newAction.setActionType("COLLECT");
             newAction.setStatus(1);
-            newAction.setCreateTime(new Date());
-            newAction.setUpdateTime(new Date());
+            newAction.setCreateTime(TimeUtils.getCurrentBeijingTime());
+            newAction.setUpdateTime(TimeUtils.getCurrentBeijingTime());
             userPictureActionMapper.insert(newAction);
 
             // 增加收藏数
             picture.setCollectCount(picture.getCollectCount() + 1);
         }
 
+        // 更新编辑时间，确保定时任务能检测到变化
+        picture.setEditTime(TimeUtils.getCurrentBeijingTime());
+        
         // 保存更新后的图片信息
         pictureService.updateById(picture);
         newCollectCount = picture.getCollectCount();
@@ -292,6 +301,9 @@ public class PictureActionServiceImpl implements PictureActionService {
         // 清理缓存
         stringRedisTemplate.delete(COLLECT_REDIS_PREFIX + userId + ":" + pictureId);
         stringRedisTemplate.delete(PICTURE_COLLECT_COUNT_CACHE_KEY);
+
+        // 异步更新推荐分数
+        updateRecommendScoreAsync(picture);
 
         // 返回结果
         Map<String, Object> result = new HashMap<>();
@@ -329,8 +341,8 @@ public class PictureActionServiceImpl implements PictureActionService {
             newAction.setPictureId(pictureId);
             newAction.setActionType("SHARE");
             newAction.setStatus(1);
-            newAction.setCreateTime(new Date());
-            newAction.setUpdateTime(new Date());
+            newAction.setCreateTime(TimeUtils.getCurrentBeijingTime());
+            newAction.setUpdateTime(TimeUtils.getCurrentBeijingTime());
             userPictureActionMapper.insert(newAction);
 
             // 增加图片的分享数
@@ -342,6 +354,14 @@ public class PictureActionServiceImpl implements PictureActionService {
             if (cachedShareCount != null) {
                 cachedShareCount = cachedShareCount + 1;
                 stringRedisTemplate.opsForHash().put(PICTURE_SHARE_COUNT_CACHE_KEY, pictureId.toString(), String.valueOf(cachedShareCount));
+            }
+
+            // 异步更新推荐分数（只有分享数增加时才更新）
+            if (countIncreased) {
+                Picture picture = pictureService.getById(pictureId);
+                if (picture != null) {
+                    updateRecommendScoreAsync(picture);
+                }
             }
         } else {
             // 重复分享：UPDATE 现有记录的 update_time
@@ -415,6 +435,12 @@ public class PictureActionServiceImpl implements PictureActionService {
         // 增加图片的下载数
         updatePictureCount("downloadCount", pictureId, 1);
 
+        // 异步更新推荐分数
+        Picture picture = pictureService.getById(pictureId);
+        if (picture != null) {
+            updateRecommendScoreAsync(picture);
+        }
+
         // 从短期缓存读取下载数（若有）
         Long cachedDownloadCount = getCountFromCache(PICTURE_DOWNLOAD_COUNT_CACHE_KEY, pictureId);
         
@@ -424,7 +450,7 @@ public class PictureActionServiceImpl implements PictureActionService {
             stringRedisTemplate.opsForHash().put(PICTURE_DOWNLOAD_COUNT_CACHE_KEY, pictureId.toString(), String.valueOf(cachedDownloadCount));
         } else {
             // 如果短期缓存不存在，则从 DB 读取并回填短期缓存（5 分钟）
-            Picture picture = pictureService.getById(pictureId);
+            // 重用上面已经获取的 picture 对象
             cachedDownloadCount = picture != null ? picture.getDownloadCount() : 0L;
             stringRedisTemplate.opsForHash().put(PICTURE_DOWNLOAD_COUNT_CACHE_KEY, pictureId.toString(), String.valueOf(cachedDownloadCount));
             stringRedisTemplate.expire(PICTURE_DOWNLOAD_COUNT_CACHE_KEY, 5, TimeUnit.MINUTES);
@@ -501,11 +527,12 @@ public class PictureActionServiceImpl implements PictureActionService {
     /**
      * 原子更新图片计数字段（支持 view/like/collect/share）
      * - delta > 0 时使用 +1；delta <= 0 时使用 GREATEST(..., 0) 避免计数变负。
+     * - 同时更新 editTime 字段，确保定时任务能检测到变化
      */
     private void updatePictureCount(String column, Long pictureId, int delta) {
         String sql = delta > 0
-                ? "UPDATE picture SET " + column + " = " + column + " + 1 WHERE id = ?"
-                : "UPDATE picture SET " + column + " = GREATEST(" + column + " - 1, 0) WHERE id = ?";
+                ? "UPDATE picture SET " + column + " = " + column + " + 1, editTime = NOW() WHERE id = ?"
+                : "UPDATE picture SET " + column + " = GREATEST(" + column + " - 1, 0), editTime = NOW() WHERE id = ?";
         int updatedRows = jdbcTemplate.update(sql, pictureId);
         if (updatedRows == 0) {
             // 如果受影响行数为 0，可能是图片不存在或 ID 错误
@@ -517,7 +544,7 @@ public class PictureActionServiceImpl implements PictureActionService {
      * 计算到明天 00:00:00 的剩余秒数（用于浏览防重键过期）
      */
     private long getSecondsUntilMidnight() {
-        LocalDateTime now = LocalDateTime.now(); // 当前时间
+        LocalDateTime now = LocalDateTime.now(ZoneId.of("Asia/Shanghai")); // 当前北京时间
         LocalDateTime nextDayStart = now.toLocalDate().plusDays(1).atStartOfDay(); // 明天 00:00:00
         return between(now, nextDayStart).getSeconds(); // 计算秒数差并返回
     }
@@ -610,5 +637,31 @@ public class PictureActionServiceImpl implements PictureActionService {
         result.put("remainingDownloads", Math.max(0, 3 - todayDownloadCount));
         
         return result;
+    }
+
+    /**
+     * 异步更新推荐分数
+     */
+    private void updateRecommendScoreAsync(Picture picture) {
+        try {
+            // 计算新的推荐分数
+            double oldScore = picture.getRecommendScore() != null ? picture.getRecommendScore() : 0.0;
+            double newScore = recommendationServiceImpl.calculateRecommendScore(picture, oldScore);
+
+            // 只有分数变化超过阈值才更新
+            if (Math.abs(newScore - oldScore) > 0.01) {
+                // 更新数据库
+                picture.setRecommendScore(newScore);
+                picture.setScoreUpdatedAt(TimeUtils.getCurrentBeijingTime());
+                pictureService.updateById(picture);
+
+                // 更新Redis缓存
+                redisRankServiceImpl.updatePictureScore(picture.getId(), newScore);
+
+                log.debug("异步更新图片{}推荐分数: {} -> {}", picture.getId(), oldScore, newScore);
+            }
+        } catch (Exception e) {
+            log.error("异步更新图片{}推荐分数失败: {}", picture.getId(), e.getMessage(), e);
+        }
     }
 }

@@ -454,6 +454,7 @@ declare namespace API {
     spaceId?: number
     tags?: string[]
     thumbnailUrl?: string
+    webpUrl?: string
     updateTime?: string
     url?: string
     userVO?: UserVO

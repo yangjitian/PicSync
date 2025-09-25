@@ -12,6 +12,7 @@ import com.qcloud.cos.model.ciModel.persistence.PicOperations;
 import com.yudi.cloud.config.CosClientConfig;
 import com.yudi.cloud.exception.BusinessException;
 import com.yudi.cloud.exception.ErrorCode;
+import com.yudi.cloud.exception.ThrowUtils;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
@@ -81,14 +82,16 @@ public class CosManager {
         // 返回原始信息
         picOperations.setIsPicInfo(1);
         List<PicOperations.Rule> rules = new ArrayList<>();
-        // 图片压缩(webp格式)
+        
+        // 生成WebP格式（用于优化显示，但不替换原图）
         String webpKey = FileUtil.mainName(key) + ".webp";
-        PicOperations.Rule compressRule = new PicOperations.Rule();
-        compressRule.setBucket(cosClientConfig.getBucketName());
-        compressRule.setFileId(webpKey);
-        compressRule.setRule("imageMogr2/format/webp");
-        rules.add(compressRule);
-        // 生成略缩图,仅仅对 > 20kb 图片进行处理
+        PicOperations.Rule webpRule = new PicOperations.Rule();
+        webpRule.setBucket(cosClientConfig.getBucketName());
+        webpRule.setFileId(webpKey);
+        webpRule.setRule("imageMogr2/format/webp");
+        rules.add(webpRule);
+        
+        // 生成缩略图,仅仅对 > 20kb 图片进行处理
         if (file.length() > 20 * 1024) {
             String thumbnailKey = FileUtil.mainName(key) + "_thumbnail." + FileUtil.getSuffix(key);
             PicOperations.Rule thumbnailRule = new PicOperations.Rule();
@@ -104,35 +107,64 @@ public class CosManager {
     }
 
     /**
-     * 删除 COS 中的图片及其衍生文件（原图、WebP、缩略图）
+     * 删除 COS 中的图片及其衍生文件（原图、WebP，保留缩略图）
      *
-     * @param fullKey COS 对象完整路径，如：project/public/1/20250802_a1b2c3d4.jpg
+     * @param fullKey COS 对象完整路径，如：yudiPicSync/public/1/avatar.jpg
      */
     public void deletePictureObject(String fullKey) {
-        if (StrUtil.isBlank(fullKey)) {
-            log.warn("COS delete ignored: fullKey is blank");
-            return;
-        }
+        ThrowUtils.throwIf(StrUtil.isBlank(fullKey),ErrorCode.PARAMETER_ERROR,"fullKey is blank");
 
         String bucketName = cosClientConfig.getBucketName();
-        String mainName = FileUtil.mainName(fullKey); // 包含路径的文件名（无后缀）
-        String suffix = FileUtil.getSuffix(fullKey);
-
-        // 明确构建三个文件的 key
+        // 使用字符串处理提取路径和文件名，移除扩展名，保留完整路径
+        String mainName = fullKey.substring(0, fullKey.lastIndexOf('.'));
+        // yudiPicSync/public/1/avatar
         String webpKey = mainName + ".webp";
-        String thumbnailKey = mainName + "_thumbnail." + suffix;
+        List<String> keysToDelete = Arrays.asList(
+                fullKey,        // 原图   yudiPicSync/public/1/avatar.jpg
+                webpKey         // WebP版本  yudiPicSync/public/1/avatar.webp
+        );
 
+        for (String key : keysToDelete) {
+            try {
+                // 先检查文件是否存在
+                boolean exists = cosClient.doesObjectExist(bucketName, key);
+                if (exists) {
+                    cosClient.deleteObject(bucketName, key);
+                }
+            } catch (Exception e) {
+                log.error("Failed to delete COS file: {}, error: {}", key, e.getMessage(), e);
+                // 不抛出异常，继续删除其他文件
+            }
+        }
+    }
+
+    /**
+     * 强制删除 COS 中的图片及其衍生文件（不检查存在性，直接删除）
+     * 用于处理WebP文件可能存在的异步生成问题
+     *
+     * @param fullKey COS 对象完整路径
+     */
+    public void forceDeletePictureObject(String fullKey) {
+        ThrowUtils.throwIf(StrUtil.isBlank(fullKey),ErrorCode.PARAMETER_ERROR);
+
+        String bucketName = cosClientConfig.getBucketName();
+        String mainName = fullKey.substring(0, fullKey.lastIndexOf('.'));
+        String webpKey = mainName + ".webp";
         List<String> keysToDelete = Arrays.asList(
                 fullKey,
-                webpKey,
-                thumbnailKey
+                webpKey
         );
 
         for (String key : keysToDelete) {
             try {
                 cosClient.deleteObject(bucketName, key);
             } catch (Exception e) {
-                throw new BusinessException(ErrorCode.SYSTEM_ERROR,"Delete failed");
+                // 如果是文件不存在的错误，记录为警告而不是错误
+                if (e.getMessage() != null && e.getMessage().contains("NoSuchKey")) {
+                    log.warn("File does not exist (NoSuchKey): {}", key);
+                } else {
+                    log.error("Failed to force delete COS file: {}, error: {}", key, e.getMessage(), e);
+                }
             }
         }
     }

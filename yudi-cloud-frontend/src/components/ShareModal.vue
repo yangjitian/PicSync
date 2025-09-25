@@ -20,7 +20,11 @@
         分享链接为空，无法生成二维码
       </div>
       <div style="margin-top: 10px; font-size: 12px; color: #666;">
-        调试信息: {{ link }}
+        分享链接: {{ link }}
+      </div>
+      <!-- 调试信息 -->
+      <div v-if="!link" style="margin-top: 10px; font-size: 12px; color: #999;">
+        调试信息: link值为空
       </div>
     </a-modal>
   </div>

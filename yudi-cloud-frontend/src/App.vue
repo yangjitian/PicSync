@@ -39,4 +39,17 @@ html, body {
   min-height: 100vh;
   position: relative;
 }
+
+/* 修复Ant Design Vue下拉选项滚动问题 */
+.ant-select-dropdown {
+  position: absolute !important;
+  z-index: 1050 !important;
+  transform: none !important;
+}
+
+.ant-auto-complete-dropdown {
+  position: absolute !important;
+  z-index: 1050 !important;
+  transform: none !important;
+}
 </style>

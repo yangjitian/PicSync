@@ -14,8 +14,8 @@
       <a-layout>
         <GlobalSider class="sider" />
         <a-layout-content class="content">
-          <router-view :key="$route.fullPath" v-slot="{ Component }">
-            <component :is="Component" :key="$route.fullPath" />
+          <router-view v-slot="{ Component }">
+            <component :is="Component" />
           </router-view>
         </a-layout-content>
       </a-layout>
@@ -115,7 +115,12 @@ onMounted(() => {
     nextTick(() => {
       
       // 根据不同的路由调用对应的强制刷新函数
-      if (to.path.startsWith('/space/')) {
+      if (to.path === '/') {
+        // 主页路由刷新
+        if ((window as any).refreshHomePage) {
+          (window as any).refreshHomePage()
+        }
+      } else if (to.path.startsWith('/space/')) {
         if ((window as any).refreshSpaceDetail) {
           (window as any).refreshSpaceDetail()
         }

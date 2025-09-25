@@ -27,6 +27,7 @@ import com.yudi.cloud.model.entity.User;
 import com.yudi.cloud.model.enums.UserRoleEnum;
 import com.yudi.cloud.model.vo.user.UserLoginVO;
 import com.yudi.cloud.model.vo.user.UserVO;
+import com.yudi.cloud.utils.TimeUtils;
 import com.yudi.cloud.service.UserService;
 import com.yudi.cloud.mapper.UserMapper;
 import lombok.extern.slf4j.Slf4j;
@@ -220,6 +221,24 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User>
         userEntityCache.set(cacheKey, currentUser, 60 * 60 * 24);
         
         return currentUser;
+    }
+
+    /**
+     * 安全获取当前用户，如果未登录则返回null
+     *
+     * @param request
+     * @return
+     */
+    @Override
+    public User getLoginUserSafely(HttpServletRequest request) {
+        try {
+            return getLoginUser(request);
+        } catch (BusinessException e) {
+            if (e.getCode() == ErrorCode.NOT_LOGIN_ERROR.getCode()) {
+                return null;
+            }
+            throw e;
+        }
     }
 
     /**
@@ -479,7 +498,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User>
      */
     private void updateUserVipInfo(User user, String usedVipCode) {
         // 计算过期时间（当前时间 + 1 年）
-        Date expireTime = DateUtil.offsetMonth(new Date(), 12); // 计算当前时间加 1 年后的时间
+        Date expireTime = DateUtil.offsetMonth(TimeUtils.getCurrentBeijingTime(), 12); // 计算当前时间加 1 年后的时间
 
         // 构建更新对象
         User updateUser = new User();
@@ -528,7 +547,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User>
         }
         
         // 设置更新时间
-        updateUser.setUpdateTime(new Date());
+        updateUser.setUpdateTime(TimeUtils.getCurrentBeijingTime());
         
         return this.updateById(updateUser);
     }
@@ -579,7 +598,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User>
         User updateUser = new User();
         updateUser.setId(user.getId());
         updateUser.setUserPassword(encryptedNewPassword);
-        updateUser.setUpdateTime(new Date());
+        updateUser.setUpdateTime(TimeUtils.getCurrentBeijingTime());
         
         return this.updateById(updateUser);
     }

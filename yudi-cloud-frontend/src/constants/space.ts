@@ -12,7 +12,7 @@ export const SPACE_LEVEL_MAP: Record<number, string> = {
   2: '旗舰版',
 }
 
-// 空间级别选项映射
+// 空间级别选项映射（完整版）
 export const SPACE_LEVEL_OPTIONS = Object.keys(SPACE_LEVEL_MAP).map((key) => {
   const value = Number(key) // Convert string key to number
   return {
@@ -20,6 +20,14 @@ export const SPACE_LEVEL_OPTIONS = Object.keys(SPACE_LEVEL_MAP).map((key) => {
     value,
   }
 })
+
+// 空间级别选项映射（普通用户版 - 仅普通版）
+export const SPACE_LEVEL_OPTIONS_FOR_COMMON_USER = [
+  {
+    label: SPACE_LEVEL_MAP[SPACE_LEVEL_ENUM.COMMON],
+    value: SPACE_LEVEL_ENUM.COMMON,
+  }
+]
 
 // 空间类型枚举
 export const SPACE_TYPE_ENUM = {

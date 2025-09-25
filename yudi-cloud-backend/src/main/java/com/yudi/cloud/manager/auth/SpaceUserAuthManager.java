@@ -105,4 +105,61 @@ public class SpaceUserAuthManager {
         }
         return Collections.emptyList();
     }
+
+    /**
+     * 获取权限列表（支持图片所有者权限检查）
+     *
+     * @param space
+     * @param loginUser
+     * @param pictureUserId 图片所有者ID
+     * @return
+     */
+    public List<String> getPermissionList(Space space, User loginUser, Long pictureUserId) {
+        if (loginUser == null) {
+            return Collections.emptyList();
+        }
+        // 管理员权限
+        List<String> ADMIN_PERMISSIONS = getPermissionsByRole(SpaceRoleEnum.ADMIN.getValue());
+        // 公共图库
+        if (space == null) {
+            if (userService.isAdmin(loginUser)) {
+                return ADMIN_PERMISSIONS;
+            }
+            // 如果是图片所有者，给予编辑和删除权限
+            if (pictureUserId != null && pictureUserId.equals(loginUser.getId())) {
+                List<String> ownerPermissions = new ArrayList<>();
+                ownerPermissions.add(SpaceUserPermissionConstant.PICTURE_VIEW);
+                ownerPermissions.add(SpaceUserPermissionConstant.PICTURE_EDIT);
+                ownerPermissions.add(SpaceUserPermissionConstant.PICTURE_DELETE);
+                return ownerPermissions;
+            }
+            return Collections.singletonList(SpaceUserPermissionConstant.PICTURE_VIEW);
+        }
+        SpaceTypeEnum spaceTypeEnum = SpaceTypeEnum.getSpaceTypeEnum(space.getSpaceType());
+        if (spaceTypeEnum == null) {
+            return  Collections.emptyList();
+        }
+        // 根据空间获取对应的权限
+        switch (spaceTypeEnum) {
+            case PRIVATE:
+                // 私有空间，仅本人或管理员有所有权限
+                if (space.getUserId().equals(loginUser.getId()) || userService.isAdmin(loginUser)) {
+                    return ADMIN_PERMISSIONS;
+                } else {
+                    return  Collections.emptyList();
+                }
+            case TEAM:
+                // 团队空间，查询 SpaceUser 并获取角色和权限
+                QueryWrapper<SpaceUser> queryWrapper = new QueryWrapper<>();
+                queryWrapper.eq("spaceId", space.getId())
+                           .eq("userId", loginUser.getId());
+                SpaceUser spaceUser = spaceUserService.getOne(queryWrapper);
+                if (spaceUser == null) {
+                    return  Collections.emptyList();
+                } else {
+                    return getPermissionsByRole(spaceUser.getSpaceRole());
+                }
+        }
+        return Collections.emptyList();
+    }
 }

@@ -26,27 +26,44 @@ create table if not exists user
 -- 图片表
 create table if not exists picture
 (
-    id           bigint auto_increment comment 'id' primary key,
-    url          varchar(512)                       not null comment '图片 url',
-    name         varchar(128)                       not null comment '图片名称',
-    introduction varchar(512)                       null comment '简介',
-    category     varchar(64)                        null comment '分类',
-    tags         varchar(512)                      null comment '标签（JSON 数组）',
-    picSize      bigint                             null comment '图片体积',
-    picWidth     int                                null comment '图片宽度',
-    picHeight    int                                null comment '图片高度',
-    picScale     double                             null comment '图片宽高比例',
-    picFormat    varchar(32)                        null comment '图片格式',
-    userId       bigint                             not null comment '创建用户 id',
-    createTime   datetime default CURRENT_TIMESTAMP not null comment '创建时间',
-    editTime     datetime default CURRENT_TIMESTAMP not null comment '编辑时间',
-    updateTime   datetime default CURRENT_TIMESTAMP not null on update CURRENT_TIMESTAMP comment '更新时间',
-    isDelete     tinyint  default 0                 not null comment '是否删除',
+    id             bigint auto_increment comment 'id' primary key,
+    url            varchar(512)                       not null comment '图片 url',
+    thumbnailUrl   varchar(512)                      null comment '缩略图 url',
+    name           varchar(128)                       not null comment '图片名称',
+    introduction   varchar(512)                       null comment '简介',
+    category       varchar(64)                        null comment '分类',
+    tags           varchar(512)                       null comment '标签（JSON 数组）',
+    picSize        bigint                             null comment '图片体积',
+    picWidth       int                                null comment '图片宽度',
+    picHeight      int                                null comment '图片高度',
+    picScale       double                             null comment '图片宽高比例',
+    picFormat      varchar(32)                        null comment '图片格式',
+    picColor       varchar(32)                        null comment '图片主色调',
+    userId         bigint                             not null comment '创建用户 id',
+    spaceId        bigint                             null comment '空间id',
+    createTime     datetime default CURRENT_TIMESTAMP not null comment '创建时间',
+    editTime       datetime default CURRENT_TIMESTAMP not null comment '编辑时间',
+    updateTime     datetime default CURRENT_TIMESTAMP not null on update CURRENT_TIMESTAMP comment '更新时间',
+    reviewStatus   int      default 0                 not null comment '状态：0-待审核; 1-通过; 2-拒绝',
+    reviewMessage  varchar(512)                       null comment '审核信息',
+    reviewerId     bigint                             null comment '审核人 id',
+    reviewTime     datetime                           null comment '审核时间',
+    viewCount      bigint   default 0                 not null comment '浏览量',
+    likeCount      bigint   default 0                 not null comment '点赞量',
+    collectCount   bigint   default 0                 not null comment '收藏量',
+    shareCount     bigint   default 0                 not null comment '分享量',
+    downloadCount  bigint   default 0                 not null comment '下载量',
+    recommendScore double   default 0.0                not null comment '推荐算法得分',
+    scoreUpdatedAt datetime                           null comment '推荐分最后更新时间',
+    isDelete       tinyint  default 0                 not null comment '是否删除',
     INDEX idx_name (name),                 -- 提升基于图片名称的查询性能
     INDEX idx_introduction (introduction), -- 用于模糊搜索图片简介
     INDEX idx_category (category),         -- 提升基于分类的查询性能
     INDEX idx_tags (tags),                 -- 提升基于标签的查询性能
-    INDEX idx_userId (userId)              -- 提升基于用户 ID 的查询性能
+    INDEX idx_userId (userId),             -- 提升基于用户 ID 的查询性能
+    INDEX idx_reviewStatus (reviewStatus), -- 提升基于审核状态的查询性能
+    INDEX idx_recommendScore (recommendScore), -- 提升基于推荐分数的查询性能
+    INDEX idx_scoreUpdatedAt (scoreUpdatedAt) -- 提升基于推荐分更新时间的查询性能
 ) comment '图片' collate = utf8mb4_unicode_ci;
 
 ALTER TABLE picture
@@ -61,7 +78,8 @@ CREATE INDEX idx_reviewStatus ON picture (reviewStatus);
 
 ALTER TABLE picture
     -- 添加新列
-    ADD COLUMN thumbnailUrl varchar(512) NULL COMMENT '缩略图 url';
+    ADD COLUMN thumbnailUrl varchar(512) NULL COMMENT '缩略图 url',
+    ADD COLUMN webpUrl varchar(512) NULL COMMENT 'WebP格式图片 url';
 
 -- 空间表
 create table if not exists space
@@ -164,3 +182,17 @@ ALTER TABLE picture
 
 -- 为下载量字段创建索引（可选，用于按下载量排序）
 CREATE INDEX idx_downloadCount ON picture (downloadCount);
+
+-- 1. 新增推荐分数字段
+ALTER TABLE picture
+    ADD COLUMN recommend_score DOUBLE DEFAULT 0.0 NOT NULL COMMENT '推荐算法得分';
+
+-- 2. 新增分数更新时间字段
+ALTER TABLE picture
+    ADD COLUMN score_updated_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL COMMENT '推荐分最后更新时间';
+
+-- 3. 创建推荐分降序索引（首页排序用）
+CREATE INDEX idx_recommend_score ON picture (recommendScore DESC);
+
+-- 4. 创建更新时间索引（后台任务扫描用）
+CREATE INDEX idx_score_updated_at ON picture (scoreUpdatedAt);

@@ -11,6 +11,7 @@ import com.yudi.cloud.model.vo.picture.PictureVO;
 
 import javax.servlet.http.HttpServletRequest;
 import java.util.List;
+import java.util.Map;
 
 /**
  * @author yudi
@@ -175,4 +176,35 @@ public interface PictureService extends IService<Picture> {
      * @return 包装后的分页对象
      */
     Page<PictureVO> listCollectedPicturesByPage(PictureQueryDTO queryDTO, HttpServletRequest request);
+
+    /**
+     * 根据图片ID列表获取分页图片VO（支持筛选，用于推荐算法）
+     *
+     * @param pictureIds      图片ID列表
+     * @param pictureQueryDTO 查询条件
+     * @param current         当前页
+     * @param size            每页大小
+     * @param request         HTTP请求
+     * @return 包装后的分页对象
+     */
+    Page<PictureVO> getPictureVOPageByIdsWithFilter(List<Long> pictureIds, PictureQueryDTO pictureQueryDTO, long current, long size, HttpServletRequest request);
+
+    /**
+     * 获取图片VO（公共访问版本，仅显示图片和作者信息）
+     *
+     * @param picture 图片实体
+     * @param request HTTP请求
+     * @return 图片VO
+     */
+    PictureVO getPictureVOForPublic(Picture picture, HttpServletRequest request);
+
+    /**
+     * 获取图片分页VO（公共访问版本，支持未登录用户）
+     * 仅显示公共图库的图片，不显示用户操作状态
+     *
+     * @param picturePage 图片分页对象
+     * @param request     HTTP请求
+     * @return 包装后的分页对象
+     */
+    Page<PictureVO> getPictureVOPageForPublic(Page<Picture> picturePage, HttpServletRequest request);
 }

@@ -2,9 +2,13 @@ package com.yudi.cloud.service.impl;
 
 import cn.hutool.core.bean.BeanUtil;
 import cn.hutool.core.collection.CollUtil;
+import cn.hutool.core.lang.hash.Hash;
 import cn.hutool.core.util.ObjUtil;
 import cn.hutool.core.util.StrUtil;
 import cn.hutool.json.JSONUtil;
+
+import java.util.ArrayList;
+
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
@@ -18,6 +22,8 @@ import com.yudi.cloud.exception.ErrorCode;
 import com.yudi.cloud.exception.ThrowUtils;
 import com.yudi.cloud.manager.CosManager;
 import com.yudi.cloud.manager.cache.PictureCache;
+import com.yudi.cloud.manager.recommend.RealtimeRecommendationServiceImpl;
+import com.yudi.cloud.manager.recommend.RedisRankServiceImpl;
 import com.yudi.cloud.manager.upload.FilePictureUpload;
 import com.yudi.cloud.manager.upload.PictureUploadTemplate;
 import com.yudi.cloud.manager.upload.UrlPictureUpload;
@@ -28,6 +34,11 @@ import com.yudi.cloud.model.entity.Picture;
 import com.yudi.cloud.model.entity.Space;
 import com.yudi.cloud.model.entity.User;
 import com.yudi.cloud.model.entity.UserPictureAction;
+
+import java.util.Collections;
+import java.util.Date;
+import java.util.Map;
+
 import com.yudi.cloud.model.enums.PictureReviewStatusEnum;
 import com.yudi.cloud.model.enums.SpaceTypeEnum;
 import com.yudi.cloud.model.vo.picture.PictureVO;
@@ -36,6 +47,7 @@ import com.yudi.cloud.service.PictureService;
 import com.yudi.cloud.service.SpaceService;
 import com.yudi.cloud.service.UserService;
 import com.yudi.cloud.utils.ColorSimilarUtils;
+import com.yudi.cloud.utils.TimeUtils;
 import lombok.extern.slf4j.Slf4j;
 import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
@@ -43,9 +55,9 @@ import org.jsoup.nodes.Element;
 import org.jsoup.select.Elements;
 import org.springframework.beans.BeanUtils;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.util.CollectionUtils;
 import org.springframework.util.DigestUtils;
 
 import javax.annotation.Resource;
@@ -54,10 +66,10 @@ import java.awt.*;
 import java.io.IOException;
 import java.util.*;
 import java.util.List;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
 /**
  * @author yudi
@@ -67,6 +79,7 @@ import java.util.stream.Stream;
 @Slf4j
 public class PictureServiceImpl extends ServiceImpl<PictureMapper, Picture>
         implements PictureService {
+
     @Resource
     private PictureCache pictureCache;
 
@@ -96,6 +109,36 @@ public class PictureServiceImpl extends ServiceImpl<PictureMapper, Picture>
 
     @Resource
     private AliYunAiApi aliYunAiApi;
+
+    @Resource
+    private RealtimeRecommendationServiceImpl realtimeRecommendationServiceImpl;
+
+    @Resource
+    private RedisRankServiceImpl redisRankServiceImpl;
+
+    // 用户信息缓存（并发安全的内存缓存，避免重复查询）
+    private final Map<Long, User> userCache = new ConcurrentHashMap<>();
+    private long lastCacheClearTime = System.currentTimeMillis();
+    private final int MAX_CACHE_SIZE = 1000;
+
+    // 缓存统计
+    private final AtomicInteger cacheHitCount = new AtomicInteger(0);
+    private final AtomicInteger cacheMissCount = new AtomicInteger(0);
+
+    // 用户操作状态缓存（避免重复查询用户对图片的操作）
+    private final Map<String, Set<Long>> userActionCache = new ConcurrentHashMap<>();
+    private long lastActionCacheClearTime = System.currentTimeMillis();
+
+    // Space信息缓存（避免重复查询Space信息）
+    private final Map<Long, Space> spaceCache = new ConcurrentHashMap<>();
+    private long lastSpaceCacheClearTime = System.currentTimeMillis();
+
+    // 查询去重机制（避免短时间内重复查询相同数据）
+    private final Map<String, Long> queryTimestampCache = new ConcurrentHashMap<>();
+    
+    // 批量查询缓存（避免重复的批量查询）
+    private final Map<String, Object> batchQueryCache = new ConcurrentHashMap<>();
+    private long lastBatchCacheClearTime = System.currentTimeMillis();
 
     /**
      * 校验图片
@@ -184,6 +227,7 @@ public class PictureServiceImpl extends ServiceImpl<PictureMapper, Picture>
         picture.setSpaceId(spaceId);
         picture.setUrl(pictureUploadResult.getUrl());
         picture.setThumbnailUrl(pictureUploadResult.getThumbnailUrl());
+        picture.setWebpUrl(pictureUploadResult.getWebpUrl());
         String picName = pictureUploadResult.getPicName();
         if (StrUtil.isNotBlank(pictureUploadRequest.getPicName())) {
             picName = pictureUploadRequest.getPicName();
@@ -196,10 +240,11 @@ public class PictureServiceImpl extends ServiceImpl<PictureMapper, Picture>
         picture.setPicFormat(pictureUploadResult.getPicFormat());
         picture.setPicColor(pictureUploadResult.getPicColor());
         picture.setUserId(loginUser.getId());
+        picture.setCategory("其他");
         this.fillReviewParams(picture, loginUser);
         if (isUpdate) {
             picture.setId(pictureId);
-            picture.setEditTime(new Date());
+            picture.setEditTime(TimeUtils.getCurrentBeijingTime());
         }
 
         // 5. 数据库事务操作
@@ -227,28 +272,49 @@ public class PictureServiceImpl extends ServiceImpl<PictureMapper, Picture>
             }
             return true;
         });
+        // 6. 异步计算推荐分数（仅对新上传且审核通过的图片）
+        if (!isUpdate && picture.getId() != null && PictureReviewStatusEnum.PASS.getValue() == picture.getReviewStatus()) {
+            try {
+                realtimeRecommendationServiceImpl.calculateAndUpdateRecommendScore(picture.getId());
+            } catch (Exception e) {
+                // 推荐分数计算失败不应该影响上传流程
+                log.error("图片{}实时推荐分数计算失败: {}", picture.getId(), e.getMessage(), e);
+            }
+        }
+
         return PictureVO.convertToPictureVO(picture);
     }
 
     /**
      * 删除图片
+     *
      * @param pictureId
      * @param loginUser
      */
     @Override
     public PictureDeleteResponse deletePicture(Long pictureId, User loginUser) {
+        // 真实性校验
         ThrowUtils.throwIf(pictureId <= 0, ErrorCode.PARAMETER_ERROR);
         ThrowUtils.throwIf(loginUser == null, ErrorCode.NO_AUTH_ERROR);
-        // 判断是否存在
         Picture oldPicture = this.getById(pictureId);
         ThrowUtils.throwIf(oldPicture == null, ErrorCode.CANNOT_FOUND_DATA_ERROR);
         // 校验权限
         checkPictureAuth(loginUser, oldPicture);
-        // 开启事务
+        // 开启事务，包含数据库操作和文件删除
         transactionTemplate.execute(status -> {
-            boolean result = this.removeById(pictureId);
-            ThrowUtils.throwIf(!result, ErrorCode.OPERATION_ERROR);
+            // 先清空url和webpUrl字段，然后进行逻辑删除
+            boolean updateResult = this.lambdaUpdate()
+                    .eq(Picture::getId, pictureId)
+                    .set(Picture::getUrl, null)
+                    .set(Picture::getWebpUrl, null)
+                    .set(Picture::getRecommendScore,null)
+                    .update();
+            ThrowUtils.throwIf(!updateResult, ErrorCode.OPERATION_ERROR, "清空URL字段失败");
             
+            // 执行逻辑删除
+            boolean result = this.removeById(pictureId);
+            ThrowUtils.throwIf(!result, ErrorCode.OPERATION_ERROR, "删除失败");
+
             // 只有属于特定空间的图片才需要更新空间额度
             // 公共图库的图片（spaceId为null）不需要更新空间额度
             if (oldPicture.getSpaceId() != null) {
@@ -260,17 +326,27 @@ public class PictureServiceImpl extends ServiceImpl<PictureMapper, Picture>
                 // 如果更新失败，说明空间容量不足，抛出异常以回滚事务
                 ThrowUtils.throwIf(!update, ErrorCode.OPERATION_ERROR, "额度更新失败");
             }
+
+            // 在事务中同步清理文件，确保数据一致性
+            try {
+                this.clearPictureFiles(oldPicture);
+            } catch (Exception e) {
+                log.error("文件删除失败，回滚事务: {}", e.getMessage(), e);
+                throw new RuntimeException("文件删除失败", e);
+            }
+
             return true;
         });
-        // 异步清理文件
-        this.clearPictureFiles(oldPicture);
-        
+
+        // 清理相关缓存
+        this.clearPictureCaches(pictureId);
+
         // 构建删除响应
         PictureDeleteResponse response = new PictureDeleteResponse();
         response.setSuccess(true);
         response.setSpaceId(oldPicture.getSpaceId());
         response.setIsPublicPicture(oldPicture.getSpaceId() == null);
-        
+
         return response;
     }
 
@@ -358,10 +434,27 @@ public class PictureServiceImpl extends ServiceImpl<PictureMapper, Picture>
             UserVO userVO = userService.getUserVO(user);
             pictureVO.setUserVO(userVO);
         }
-        
+
         // 设置分享量显示控制
         setShareCountDisplayControl(pictureVO, request);
-        
+
+        // 查询当前用户对该图片的操作状态（点赞、收藏）
+        User loginUser = userService.getLoginUserSafely(request);
+        if (loginUser != null && picture.getId() != null) {
+            List<Long> pictureIdList = Collections.singletonList(picture.getId());
+            Map<String, Set<Long>> actionMap = getUserActionStatusBatch(loginUser.getId(), pictureIdList);
+            Set<Long> likedPictureIdSet = actionMap.get("LIKE");
+            Set<Long> collectedPictureIdSet = actionMap.get("COLLECT");
+            
+            // 设置当前用户的操作状态
+            pictureVO.setLiked(likedPictureIdSet.contains(picture.getId()));
+            pictureVO.setCollected(collectedPictureIdSet.contains(picture.getId()));
+        } else {
+            // 未登录用户不显示操作状态
+            pictureVO.setLiked(false);
+            pictureVO.setCollected(false);
+        }
+
         return pictureVO;
     }
 
@@ -370,7 +463,7 @@ public class PictureServiceImpl extends ServiceImpl<PictureMapper, Picture>
      * 使用高效的一次性数据加载和单次遍历转换策略
      *
      * @param picturePage 原始 Picture 分页数据
-     * @param request HTTP 请求对象，用于可能的用户信息获取
+     * @param request     HTTP 请求对象，用于可能的用户信息获取
      * @return 转换后的 PictureVO 分页数据
      */
     @Override
@@ -386,64 +479,55 @@ public class PictureServiceImpl extends ServiceImpl<PictureMapper, Picture>
         // 1.提取所有需要查询的用户ID（使用Set去重）
         Set<Long> userIdSet = pictureList.stream()
                 .map(Picture::getUserId)
+                .filter(Objects::nonNull)
                 .collect(Collectors.toSet());
-        // 2.批量查询用户信息，并构建ID到用户的映射Map
-        // 使用toMap而不是groupingBy，因为每个ID对应唯一用户，避免不必要的List结构
-        Map<Long, User> userMap = userService.listByIds(userIdSet).stream()
-                .collect(Collectors.toMap(
-                        User::getId,                  // 键提取器：用户ID
-                        Function.identity(),          // 值提取器：用户对象本身
-                        (existing, replacement) -> existing // 合并函数：处理键冲突（保留现有值）
-                ));
+        // 提取所有需查询的图片ID
+        List<Long> pictureIdList = pictureList.stream()
+                .map(Picture::getId)
+                .collect(Collectors.toList());
 
-        // 3. 查询当前用户对这些图片的操作状态（点赞、收藏）
-        List<Long> pictureIdList = pictureList.stream().map(Picture::getId).collect(Collectors.toList());
+        // 2.批量查询用户信息。使用toMap而不是groupingBy，因为每个ID对应唯一用户，避免不必要的List结构
+        Map<Long, User> userMap = userIdSet.isEmpty() ? Collections.emptyMap() : userService.listByIds(userIdSet).stream()
+                .collect(Collectors.toMap(User::getId,
+                        Function.identity(),
+                        (existing,replacement) -> existing)
+                );
+
+        // 3. 查询当前用户的操作状态（优化：一次查询获取所有操作）
         User loginUser = userService.getLoginUser(request);
-        Set<Long> likedPictureIdSet = new HashSet<>();
-        Set<Long> collectedPictureIdSet = new HashSet<>();
-
+        Map<Long, Set<String>> userActionMap = new HashMap<>();
         if (loginUser != null && CollUtil.isNotEmpty(pictureIdList)) {
             // 查询点赞记录
-            List<UserPictureAction> likeActions = userPictureActionMapper.selectList(
+            List<UserPictureAction> userPictureActions = userPictureActionMapper.selectList(
                     new QueryWrapper<UserPictureAction>()
                             .eq("user_id", loginUser.getId())
                             .in("picture_id", pictureIdList)
-                            .eq("action_type", "LIKE")
+                            .eq("action_type", Arrays.asList("LIKE", "COLLECT"))
                             .eq("status", 1)
             );
-            likedPictureIdSet = likeActions.stream().map(UserPictureAction::getPictureId).collect(Collectors.toSet());
-
-            // 查询收藏记录
-            List<UserPictureAction> collectActions = userPictureActionMapper.selectList(
-                    new QueryWrapper<UserPictureAction>()
-                            .eq("user_id", loginUser.getId())
-                            .in("picture_id", pictureIdList)
-                            .eq("action_type", "COLLECT")
-                            .eq("status", 1)
-            );
-            collectedPictureIdSet = collectActions.stream().map(UserPictureAction::getPictureId).collect(Collectors.toSet());
+            userActionMap = userPictureActions.stream().collect(Collectors.groupingBy(UserPictureAction::getPictureId,
+                    Collectors.mapping(UserPictureAction::getActionType, Collectors.toSet())));
         }
 
-        // 4.单次遍历完成实体转换和数据填充
-        final Set<Long> finalLikedPictureIdSet = likedPictureIdSet;
-        final Set<Long> finalCollectedPictureIdSet = collectedPictureIdSet;
+        // 4. 转换为VO
+        final Map<Long, Set<String>> finalUserActionMap = userActionMap;
         List<PictureVO> pictureVOList = pictureList.stream().map(picture -> {
             // entity -> vo
             PictureVO pictureVO = PictureVO.convertToPictureVO(picture);
-            // 从Map中获取关联的用户信息（高效O(1)查询）
+            // 设置用户信息
             User user = userMap.get(picture.getUserId());
+            if (user != null) {
+                pictureVO.setUserVO(userService.getUserVO(user));
+            }
 
-            // 将User转换为UserVO并设置到PictureVO中
-            // 注意：userService.getUserVO应能处理user为null的情况
-            pictureVO.setUserVO(userService.getUserVO(user));
-            
             // 设置分享量显示控制
             setShareCountDisplayControl(pictureVO, request);
 
             // 设置当前用户的操作状态
-            pictureVO.setLiked(finalLikedPictureIdSet.contains(picture.getId()));
-            pictureVO.setCollected(finalCollectedPictureIdSet.contains(picture.getId()));
-            
+            Set<String> action = finalUserActionMap.getOrDefault(picture.getId(), Collections.emptySet());
+            pictureVO.setLiked(action.contains("LIKE"));
+            pictureVO.setCollected(action.contains("COLLECT"));
+
             return pictureVO;
         }).collect(Collectors.toList());
         // 将转换后的VO列表设置到分页对象中
@@ -452,29 +536,51 @@ public class PictureServiceImpl extends ServiceImpl<PictureMapper, Picture>
     }
 
     /**
-     *编辑图片
+     * 编辑图片
+     *
      * @param pictureEditDTO
      * @param loginUser
      */
     @Override
     public void editPicture(PictureEditDTO pictureEditDTO, User loginUser) {
-        // 在此处将实体类和 DTO 进行转换
-        Picture picture = new Picture();
-        BeanUtils.copyProperties(pictureEditDTO, picture);
-        // 注意将 list 转为 string
-        picture.setTags(JSONUtil.toJsonStr(pictureEditDTO.getTags()));
-        // 设置编辑时间
-        picture.setEditTime(new Date());
-        // 数据校验
-        this.validPicture(picture);
         // 判断是否存在
         long id = pictureEditDTO.getId();
         Picture oldPicture = this.getById(id);
         ThrowUtils.throwIf(oldPicture == null, ErrorCode.CANNOT_FOUND_DATA_ERROR);
+        
         // 校验权限
 //        checkPictureAuth(loginUser, oldPicture);
+        
+        // 创建更新对象，只更新允许编辑的字段
+        Picture picture = new Picture();
+        picture.setId(id);
+        
+        // 只复制允许编辑的字段，避免覆盖作者信息
+        if (StrUtil.isNotBlank(pictureEditDTO.getName())) {
+            picture.setName(pictureEditDTO.getName());
+        }
+        if (StrUtil.isNotBlank(pictureEditDTO.getIntroduction())) {
+            picture.setIntroduction(pictureEditDTO.getIntroduction());
+        }
+        if (StrUtil.isNotBlank(pictureEditDTO.getCategory())) {
+            picture.setCategory(pictureEditDTO.getCategory());
+        } else {
+            // 设置默认分类：如果分类为空，默认为"其他"
+            picture.setCategory("其他");
+        }
+        if (CollUtil.isNotEmpty(pictureEditDTO.getTags())) {
+            picture.setTags(JSONUtil.toJsonStr(pictureEditDTO.getTags()));
+        }
+        
+        // 设置编辑时间
+        picture.setEditTime(TimeUtils.getCurrentBeijingTime());
+        
+        // 数据校验
+        this.validPicture(picture);
+        
         // 补充审核参数
         this.fillReviewParams(picture, loginUser);
+        
         // 操作数据库
         boolean result = this.updateById(picture);
         ThrowUtils.throwIf(!result, ErrorCode.OPERATION_ERROR);
@@ -498,13 +604,27 @@ public class PictureServiceImpl extends ServiceImpl<PictureMapper, Picture>
         if (oldPicture.getReviewStatus().equals(reviewStatus)) {
             throw new BusinessException(ErrorCode.PARAMETER_ERROR, "已是该状态");
         }
-        // 4.数据库操作
+        // 4.数据库操作 - 只更新审核相关字段，保护作者信息
         Picture updatePicture = new Picture();
-        BeanUtil.copyProperties(pictureReviewDTO, updatePicture);
+        updatePicture.setId(id);
+        updatePicture.setReviewStatus(reviewStatus);
+        if (StrUtil.isNotBlank(reviewMessage)) {
+            updatePicture.setReviewMessage(reviewMessage);
+        }
         updatePicture.setReviewerId(loginUser.getId());
         updatePicture.setReviewTime(new Date());
         boolean result = this.updateById(updatePicture);
         ThrowUtils.throwIf(!result, ErrorCode.OPERATION_ERROR);
+
+        // 5. 如果审核通过，异步计算推荐分数
+        if (PictureReviewStatusEnum.PASS.equals(reviewStatusEnum)) {
+            try {
+                realtimeRecommendationServiceImpl.calculateAndUpdateRecommendScore(id);
+            } catch (Exception e) {
+                // 推荐分数计算失败不应该影响审核流程
+                log.error("图片{}审核通过后推荐分数计算失败: {}", id, e.getMessage(), e);
+            }
+        }
     }
 
     /**
@@ -517,9 +637,10 @@ public class PictureServiceImpl extends ServiceImpl<PictureMapper, Picture>
     public void fillReviewParams(Picture picture, User loginUser) {
         if (userService.isAdmin(loginUser)) {
             picture.setReviewStatus(PictureReviewStatusEnum.PASS.getValue());
-            picture.setReviewMessage("管理员上传自动过审");
+            picture.setReviewMessage("管理员编辑自动过审");
             picture.setReviewerId(loginUser.getId());
             picture.setReviewTime(new Date());
+            // 注意：这里不设置 userId，保持原有作者信息
         } else {
             picture.setReviewStatus(PictureReviewStatusEnum.REVIEWING.getValue());
         }
@@ -528,8 +649,6 @@ public class PictureServiceImpl extends ServiceImpl<PictureMapper, Picture>
     /**
      * 批量抓取上传图片
      *
-     * @param pictureUploadByBatchDTO
-     * @param loginUser
      * @return 上传成功数量
      */
     @Override
@@ -562,34 +681,34 @@ public class PictureServiceImpl extends ServiceImpl<PictureMapper, Picture>
             log.error("抓取失败", e);
             throw new BusinessException(ErrorCode.OPERATION_ERROR, "网络请求失败: " + e.getMessage());
         }
-        
+
         // 解析内容
         log.info("开始解析页面内容...");
         Element div = document.getElementsByClass("dgControl").first();
         log.info("查找dgControl元素: {}", div != null ? "找到" : "未找到");
-        
+
         if (ObjUtil.isEmpty(div)) {
             log.error("页面结构可能已改变，尝试查找其他元素...");
             // 尝试查找其他可能的容器元素
             Elements possibleContainers = document.select("div, ul, ol");
             log.info("找到可能的容器元素数量: {}", possibleContainers.size());
-            
+
             String pageHtml = document.html();
-            log.info("页面HTML片段 (前1000字符): {}", 
-                pageHtml.length() > 1000 ? pageHtml.substring(0, 1000) + "..." : pageHtml);
-            
+            log.info("页面HTML片段 (前1000字符): {}",
+                    pageHtml.length() > 1000 ? pageHtml.substring(0, 1000) + "..." : pageHtml);
+
             throw new BusinessException(ErrorCode.OPERATION_ERROR, "未找到目标元素dgControl，页面结构可能已改变");
         }
-        
+
         Elements imgElementList = div.select("img.ming");
         log.info("使用img.ming选择器找到图片元素数量: {}", imgElementList.size());
-        
+
         if (imgElementList.isEmpty()) {
             log.warn("未找到img.ming元素，尝试其他选择器...");
             // 尝试其他可能的选择器
             imgElementList = div.select("img");
             log.info("使用通用img选择器找到元素数量: {}", imgElementList.size());
-            
+
             if (imgElementList.isEmpty()) {
                 log.error("div内未找到任何img元素");
                 throw new BusinessException(ErrorCode.OPERATION_ERROR, "页面中未找到任何图片元素");
@@ -597,20 +716,22 @@ public class PictureServiceImpl extends ServiceImpl<PictureMapper, Picture>
         }
         // 遍历 上传
         int uploadCount = 0;
+        // 收集成功上传的图片ID,用于后面计算推荐分数
+        List<Long> uploadedPictureIds = new ArrayList<>();
         log.info("开始遍历图片元素，总数: {}", imgElementList.size());
-        
+
         for (int i = 0; i < imgElementList.size(); i++) {
             Element imgElement = imgElementList.get(i);
             log.info("=== 处理第{}个图片元素 ===", i + 1);
-            
+
             String fileUrl = imgElement.attr("src");
             log.info("图片URL: '{}'", fileUrl);
-            
+
             if (StrUtil.isBlank(fileUrl)) {
                 log.info("当前链接为空，已跳过");
                 continue;
             }
-            
+
             // 处理图片的地址，防止转义或者和对象存储冲突的问题
             // codefather.cn?yupi=dog，应该只保留 codefather.cn
             int questionMarkIndex = fileUrl.indexOf("?");
@@ -618,18 +739,24 @@ public class PictureServiceImpl extends ServiceImpl<PictureMapper, Picture>
                 fileUrl = fileUrl.substring(0, questionMarkIndex);
                 log.info("处理后的URL: '{}'", fileUrl);
             }
-            
+
             // 上传图片
             PictureUploadRequest pictureUploadRequest = new PictureUploadRequest();
             pictureUploadRequest.setPicName(namePrefix + (uploadCount + 1));
             pictureUploadRequest.setFileUrl(fileUrl);
             log.info("准备上传图片: {}", pictureUploadRequest.getPicName());
-            
+
             try {
                 log.info("开始调用uploadPicture方法...");
                 PictureVO pictureVO = this.uploadPicture(fileUrl, pictureUploadRequest, loginUser);
                 log.info("图片上传成功, id = {}", pictureVO.getId());
                 uploadCount++;
+
+                // 收集成功上传的图片ID，用于批量计算推荐分数
+                if (pictureVO.getId() != null) {
+                    uploadedPictureIds.add(pictureVO.getId());
+                }
+
                 log.info("当前成功数量: {}/{}", uploadCount, count);
             } catch (BusinessException e) {
                 log.warn("图片上传失败: {}", e.getMessage());
@@ -638,13 +765,25 @@ public class PictureServiceImpl extends ServiceImpl<PictureMapper, Picture>
                 log.error("图片上传出现未知错误", e);
                 continue;
             }
-            
+
             if (uploadCount >= count) {
                 log.info("已达到目标数量: {}, 停止处理", count);
                 break;
             }
         }
-        
+
+        // 批量计算推荐分数（仅对成功上传的图片）
+        if (!uploadedPictureIds.isEmpty()) {
+            try {
+                log.info("开始批量计算{}张图片的推荐分数", uploadedPictureIds.size());
+                realtimeRecommendationServiceImpl.batchCalculateAndUpdateRecommendScores(uploadedPictureIds);
+                log.info("批量推荐分数计算任务已提交");
+            } catch (Exception e) {
+                // 推荐分数计算失败不应该影响批量上传流程
+                log.error("批量推荐分数计算失败: {}", e.getMessage(), e);
+            }
+        }
+
         log.info("=== 批量上传完成，成功数量: {} ===", uploadCount);
         return uploadCount;
     }
@@ -681,7 +820,7 @@ public class PictureServiceImpl extends ServiceImpl<PictureMapper, Picture>
     public void checkPictureAuth(User loginUser, Picture picture) {
         Long spaceId = picture.getSpaceId();
         Long loginUserId = loginUser.getId();
-        
+
         if (spaceId == null) {
             // 公共图库：普通用户只能删除自己上传的图片，管理员可以删除所有图片
             if (!picture.getUserId().equals(loginUserId) && !userService.isAdmin(loginUser)) {
@@ -693,7 +832,7 @@ public class PictureServiceImpl extends ServiceImpl<PictureMapper, Picture>
             if (space == null) {
                 throw new BusinessException(ErrorCode.CANNOT_FOUND_DATA_ERROR, "空间不存在");
             }
-            
+
             if (space.getSpaceType() == SpaceTypeEnum.PRIVATE.getValue()) {
                 // 私有空间：只有空间创建者才能删除图片
                 if (!space.getUserId().equals(loginUserId)) {
@@ -708,21 +847,25 @@ public class PictureServiceImpl extends ServiceImpl<PictureMapper, Picture>
     }
 
     /**
-     * 【通用】清理图片文件（COS：原图 + WebP + 缩略图）
+     * 【通用】清理图片文件（COS：原图 + WebP，保留缩略图）
      * 适用于：更新图片前清理旧图、删除图片时清理文件
      *
      * @param picture 图片实体（必须包含 url）
      */
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
     @Override
     public void clearPictureFiles(Picture picture) {
-        if (picture == null || StrUtil.isBlank(picture.getUrl())) {
-            log.warn("Skip clearing picture files: picture is null or URL is empty");
-            return;
+        ThrowUtils.throwIf(picture == null, ErrorCode.PARAMETER_ERROR, "图片不存在");
+        // 删除原图及其WebP版本（保留缩略图）
+        if (StrUtil.isNotBlank(picture.getUrl())) {
+            String cosKey = extractCosKeyFromUrl(picture.getUrl());
+            // 先尝试普通删除，如果WebP文件删除失败，使用强制删除
+            try {
+                cosManager.deletePictureObject(cosKey);
+            } catch (Exception e) {
+                log.warn("正常删除失败，尝试强制删除: {}", e.getMessage());
+                cosManager.forceDeletePictureObject(cosKey);
+            }
         }
-
-        String cosKey = extractCosKeyFromUrl(picture.getUrl());
-        cosManager.deletePictureObject(cosKey);
     }
 
     /**
@@ -775,7 +918,7 @@ public class PictureServiceImpl extends ServiceImpl<PictureMapper, Picture>
     @Override
     public List<PictureVO> searchLikedPicturesByColor(String picColor, User loginUser) {
         ThrowUtils.throwIf(StrUtil.isBlank(picColor) || loginUser == null, ErrorCode.PARAMETER_ERROR);
-        
+
         // 1. 查询用户点赞的图片ID列表
         List<UserPictureAction> likedActions = userPictureActionMapper.selectList(
                 new QueryWrapper<UserPictureAction>()
@@ -783,21 +926,21 @@ public class PictureServiceImpl extends ServiceImpl<PictureMapper, Picture>
                         .eq("action_type", "LIKE")
                         .eq("status", 1)
         );
-        
+
         if (CollUtil.isEmpty(likedActions)) {
             return Collections.emptyList();
         }
-        
+
         List<Long> likedPictureIds = likedActions.stream()
                 .map(UserPictureAction::getPictureId)
                 .collect(Collectors.toList());
-        
+
         // 2. 查询这些图片的详细信息
         List<Picture> pictureList = this.lambdaQuery()
                 .in(Picture::getId, likedPictureIds)
                 .isNotNull(Picture::getPicColor)
                 .list();
-        
+
         if (CollUtil.isEmpty(pictureList)) {
             return Collections.emptyList();
         }
@@ -837,14 +980,14 @@ public class PictureServiceImpl extends ServiceImpl<PictureMapper, Picture>
                     return pictureVO;
                 })
                 .collect(Collectors.toList());
-        
+
         return pictureVOList;
     }
 
     @Override
     public List<PictureVO> searchCollectedPicturesByColor(String picColor, User loginUser) {
         ThrowUtils.throwIf(StrUtil.isBlank(picColor) || loginUser == null, ErrorCode.PARAMETER_ERROR);
-        
+
         // 1. 查询用户收藏的图片ID列表
         List<UserPictureAction> collectedActions = userPictureActionMapper.selectList(
                 new QueryWrapper<UserPictureAction>()
@@ -852,21 +995,21 @@ public class PictureServiceImpl extends ServiceImpl<PictureMapper, Picture>
                         .eq("action_type", "COLLECT")
                         .eq("status", 1)
         );
-        
+
         if (CollUtil.isEmpty(collectedActions)) {
             return Collections.emptyList();
         }
-        
+
         List<Long> collectedPictureIds = collectedActions.stream()
                 .map(UserPictureAction::getPictureId)
                 .collect(Collectors.toList());
-        
+
         // 2. 查询这些图片的详细信息
         List<Picture> pictureList = this.lambdaQuery()
                 .in(Picture::getId, collectedPictureIds)
                 .isNotNull(Picture::getPicColor)
                 .list();
-        
+
         if (CollUtil.isEmpty(pictureList)) {
             return Collections.emptyList();
         }
@@ -906,7 +1049,7 @@ public class PictureServiceImpl extends ServiceImpl<PictureMapper, Picture>
                     return pictureVO;
                 })
                 .collect(Collectors.toList());
-        
+
         return pictureVOList;
     }
 
@@ -955,8 +1098,8 @@ public class PictureServiceImpl extends ServiceImpl<PictureMapper, Picture>
     /**
      * 批量编辑图片（仅限空间内）
      *
-     * @param pictureEditByBatchRequest   批量编辑请求参数
-     * @param loginUser 当前登录用户
+     * @param pictureEditByBatchRequest 批量编辑请求参数
+     * @param loginUser                 当前登录用户
      */
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -1008,7 +1151,7 @@ public class PictureServiceImpl extends ServiceImpl<PictureMapper, Picture>
             if (CollUtil.isNotEmpty(tags)) {
                 updatePicture.setTags(JSONUtil.toJsonStr(tags));
             }
-            updatePicture.setEditTime(new Date());
+            updatePicture.setEditTime(TimeUtils.getCurrentBeijingTime());
 
             updateList.add(updatePicture);
         }
@@ -1026,7 +1169,7 @@ public class PictureServiceImpl extends ServiceImpl<PictureMapper, Picture>
      * nameRule 格式示例：图片{序号}
      *
      * @param pictureList 待更新的图片列表
-     * @param nameRule 命名规则
+     * @param nameRule    命名规则
      */
     private void fillPictureWithNameRule(List<Picture> pictureList, String nameRule) {
         if (StrUtil.isBlank(nameRule) || CollUtil.isEmpty(pictureList)) {
@@ -1053,7 +1196,8 @@ public class PictureServiceImpl extends ServiceImpl<PictureMapper, Picture>
         if (StrUtil.isBlank(url)) return null;
         String host = cosClientConfig.getHost();
         if (url.startsWith(host)) {
-            return url.substring(host.length() + 1); // 去掉 "https://host/"
+            //  https://my-bucket.cos.ap-beijing.myqcloud.com/yudiPicSync/public/1/avatar.jpg -> yudiPicSync/public/1/avatar.jpg
+            return url.substring(host.length() + 1);
         }
         return url;
     }
@@ -1066,45 +1210,23 @@ public class PictureServiceImpl extends ServiceImpl<PictureMapper, Picture>
      * 3. 其他用户：模糊显示或不显示分享量
      *
      * @param pictureVO 图片VO对象
-     * @param request HTTP请求对象
+     * @param request   HTTP请求对象
      */
     private void setShareCountDisplayControl(PictureVO pictureVO, HttpServletRequest request) {
-        if (pictureVO == null || request == null) {
-            pictureVO.setShowShareCount(false);
-            return;
-        }
+        ThrowUtils.throwIf(pictureVO == null || request == null, ErrorCode.PARAMETER_ERROR);
+        pictureVO.setShowShareCount(false);
 
         try {
-            // 获取当前登录用户
             User loginUser = userService.getLoginUser(request);
-            if (loginUser == null) {
-                // 未登录用户，不显示分享量
-                pictureVO.setShowShareCount(false);
-                return;
+            if (loginUser != null) {
+                // 只有图片上传者或管理员才显示分享量
+                boolean isOwner = pictureVO.getUserId() != null && pictureVO.getUserId().equals(loginUser.getId());
+                boolean isAdmin = userService.isAdmin(loginUser);
+                pictureVO.setShowShareCount(isOwner || isAdmin);
             }
-
-            // 判断是否显示具体分享量
-            boolean showShareCount = false;
-
-            // 1. 图片上传者：显示具体分享量
-            if (pictureVO.getUserId() != null && pictureVO.getUserId().equals(loginUser.getId())) {
-                showShareCount = true;
-            }
-            // 2. 管理员：显示所有图片的具体分享量
-            else if (userService.isAdmin(loginUser)) {
-                showShareCount = true;
-            }
-            // 3. 其他用户：不显示具体分享量
-            else {
-                showShareCount = false;
-            }
-
-            pictureVO.setShowShareCount(showShareCount);
-
         } catch (Exception e) {
-            // 异常情况下，不显示分享量
             log.warn("设置分享量显示控制时发生异常: {}", e.getMessage());
-            pictureVO.setShowShareCount(false);
+            // 异常时保持默认值false
         }
     }
 
@@ -1120,13 +1242,13 @@ public class PictureServiceImpl extends ServiceImpl<PictureMapper, Picture>
         User loginUser = userService.getLoginUser(request);
         long current = queryDTO.getCurrent();
         long pageSize = queryDTO.getPageSize();
-        
+
         // 构建查询条件，包含搜索条件
         QueryWrapper<Picture> queryWrapper = buildLikedPicturesQueryWrapper(loginUser.getId(), queryDTO);
-        
+
         // 分页查询
         Page<Picture> picturePage = this.page(new Page<>(current, pageSize), queryWrapper);
-        
+
         return this.getPictureVOPage(picturePage, request);
     }
 
@@ -1135,13 +1257,13 @@ public class PictureServiceImpl extends ServiceImpl<PictureMapper, Picture>
         User loginUser = userService.getLoginUser(request);
         long current = queryDTO.getCurrent();
         long pageSize = queryDTO.getPageSize();
-        
+
         // 构建查询条件，包含搜索条件
         QueryWrapper<Picture> queryWrapper = buildCollectedPicturesQueryWrapper(loginUser.getId(), queryDTO);
-        
+
         // 分页查询
         Page<Picture> picturePage = this.page(new Page<>(current, pageSize), queryWrapper);
-        
+
         return this.getPictureVOPage(picturePage, request);
     }
 
@@ -1150,15 +1272,15 @@ public class PictureServiceImpl extends ServiceImpl<PictureMapper, Picture>
      */
     private QueryWrapper<Picture> buildLikedPicturesQueryWrapper(Long userId, PictureQueryDTO queryDTO) {
         QueryWrapper<Picture> queryWrapper = new QueryWrapper<>();
-        
+
         // 基础条件：只查询用户点赞的图片
-        queryWrapper.inSql("id", 
-            "SELECT picture_id FROM user_picture_action WHERE user_id = " + userId + 
-            " AND action_type = 'LIKE' AND status = 1");
-        
+        queryWrapper.inSql("id",
+                "SELECT picture_id FROM user_picture_action WHERE user_id = " + userId +
+                        " AND action_type = 'LIKE' AND status = 1");
+
         // 应用搜索条件
         applySearchConditions(queryWrapper, queryDTO);
-        
+
         return queryWrapper;
     }
 
@@ -1167,15 +1289,15 @@ public class PictureServiceImpl extends ServiceImpl<PictureMapper, Picture>
      */
     private QueryWrapper<Picture> buildCollectedPicturesQueryWrapper(Long userId, PictureQueryDTO queryDTO) {
         QueryWrapper<Picture> queryWrapper = new QueryWrapper<>();
-        
+
         // 基础条件：只查询用户收藏的图片
-        queryWrapper.inSql("id", 
-            "SELECT picture_id FROM user_picture_action WHERE user_id = " + userId + 
-            " AND action_type = 'COLLECT' AND status = 1");
-        
+        queryWrapper.inSql("id",
+                "SELECT picture_id FROM user_picture_action WHERE user_id = " + userId +
+                        " AND action_type = 'COLLECT' AND status = 1");
+
         // 应用搜索条件
         applySearchConditions(queryWrapper, queryDTO);
-        
+
         return queryWrapper;
     }
 
@@ -1186,7 +1308,7 @@ public class PictureServiceImpl extends ServiceImpl<PictureMapper, Picture>
         if (queryDTO == null) {
             return;
         }
-        
+
         // 从对象中取值
         String name = queryDTO.getName();
         String introduction = queryDTO.getIntroduction();
@@ -1195,7 +1317,7 @@ public class PictureServiceImpl extends ServiceImpl<PictureMapper, Picture>
         String searchText = queryDTO.getSearchText();
         String sortField = queryDTO.getSortField();
         String sortOrder = queryDTO.getSortOrder();
-        
+
         // 从多字段中搜索
         if (StrUtil.isNotBlank(searchText)) {
             queryWrapper.and(qw -> qw.like("name", searchText)
@@ -1203,29 +1325,560 @@ public class PictureServiceImpl extends ServiceImpl<PictureMapper, Picture>
                     .like("introduction", searchText)
             );
         }
-        
+
         // 精确匹配条件
         queryWrapper.like(StrUtil.isNotBlank(name), "name", name);
         queryWrapper.eq(StrUtil.isNotBlank(category), "category", category);
-        
+
         // 标签搜索
         if (CollUtil.isNotEmpty(tags)) {
             for (String tag : tags) {
                 queryWrapper.like("tags", tag);
             }
         }
-        
+
         // 排序
         if (StrUtil.isNotBlank(sortField)) {
             boolean isAsc = "ascend".equals(sortOrder);
             queryWrapper.orderBy(true, isAsc, sortField);
         } else {
             // 默认按创建时间倒序
-            queryWrapper.orderByDesc("create_time");
+            queryWrapper.orderByDesc("createTime");
         }
     }
 
+    @Override
+    public Page<PictureVO> getPictureVOPageByIdsWithFilter(List<Long> pictureIds, PictureQueryDTO pictureQueryDTO,
+         long current, long size, HttpServletRequest request) {
+        if (CollUtil.isEmpty(pictureIds)) {
+            log.warn("图片ID列表为空，返回空分页结果");
+            return new Page<>(current, size);
+        }
+
+        try {
+            // 1. 根据ID列表查询图片
+            List<Picture> pictures = this.listByIds(pictureIds);
+            if (CollUtil.isEmpty(pictures)) {
+                log.warn("根据ID列表未找到图片，返回空分页结果");
+                return new Page<>(current, size);
+            }
+
+            // 2. 应用筛选条件
+            List<Picture> filteredPictures = pictures.stream()
+                    .filter(picture -> {
+                        // 分类筛选
+                        if (StrUtil.isNotBlank(pictureQueryDTO.getCategory())) {
+                            if (!pictureQueryDTO.getCategory().equals(picture.getCategory())) {
+                                return false;
+                            }
+                        }
+
+                        // 搜索文本筛选（支持图片名称和简介的模糊搜索）
+                        if (StrUtil.isNotBlank(pictureQueryDTO.getSearchText())) {
+                            String searchText = pictureQueryDTO.getSearchText().toLowerCase();
+                            String pictureName = picture.getName() != null ? picture.getName().toLowerCase() : "";
+                            String pictureIntro = picture.getIntroduction() != null ? picture.getIntroduction().toLowerCase() : "";
+
+                            // 如果图片名称或简介包含搜索文本，则保留
+                            if (!pictureName.contains(searchText) && !pictureIntro.contains(searchText)) {
+                                return false;
+                            }
+                        }
+
+                        return true;
+                    })
+                    .collect(Collectors.toList());
+
+            if (CollUtil.isEmpty(filteredPictures)) {
+                log.warn("筛选后无图片，返回空分页结果");
+                return new Page<>(current, size);
+            }
+
+            // 3. 批量转换为VO（优化：避免N+1查询）
+            List<PictureVO> pictureVOs = convertPicturesToVOs(filteredPictures, request);
+
+            // 4. 保持推荐算法的排序顺序，同时去重
+            Map<Long, PictureVO> pictureVOMap = pictureVOs.stream()
+                    .collect(Collectors.toMap(PictureVO::getId, Function.identity()));
+
+            // 使用LinkedHashSet保持顺序并去重
+            Set<Long> seenIds = new LinkedHashSet<>();
+            List<PictureVO> orderedPictureVOs = pictureIds.stream()
+                    .filter(seenIds::add) // 去重：只有第一次出现的ID才会被添加
+                    .map(pictureVOMap::get)
+                    .filter(Objects::nonNull)
+                    .collect(Collectors.toList());
+
+            // 5. 计算分页
+            long total = orderedPictureVOs.size();
+            long start = (current - 1) * size;
+            long end = Math.min(start + size, total);
+
+            List<PictureVO> pageRecords;
+            if (start >= total) {
+                pageRecords = Collections.emptyList();
+            } else {
+                pageRecords = orderedPictureVOs.subList((int) start, (int) end);
+            }
+
+            // 6. 构造分页结果
+            Page<PictureVO> result = new Page<>(current, size);
+            result.setRecords(pageRecords);
+            result.setTotal(total); // 总数是筛选后的数量
+
+            log.info("根据ID列表获取图片VO成功（支持搜索和筛选）: 请求{}个ID，筛选后{}张图片，分页返回{}张，搜索条件: '{}'",
+                    pictureIds.size(), total, pageRecords.size(), pictureQueryDTO.getSearchText());
+            return result;
+
+        } catch (Exception e) {
+            log.error("根据ID列表获取图片VO失败（支持筛选）: {}", e.getMessage(), e);
+            return new Page<>(current, size);
+        }
+    }
+
+    /**
+     * 清理用户缓存（定期清理过期缓存）
+     */
+    private void clearExpiredUserCache() {
+        long currentTime = System.currentTimeMillis();
+        // 5分钟过期
+        long CACHE_EXPIRE_TIME = 5 * 60 * 1000;
+        if (currentTime - lastCacheClearTime > CACHE_EXPIRE_TIME) {
+            int hitCount = cacheHitCount.get();
+            int missCount = cacheMissCount.get();
+            int totalCount = hitCount + missCount;
+            double hitRate = totalCount > 0 ? (double) hitCount / totalCount * 100 : 0;
+
+            log.info("用户缓存清理 - 缓存大小: {}, 命中率: {:.2f}% ({}/{})",
+                    userCache.size(), hitRate, hitCount, totalCount);
+
+            userCache.clear();
+            cacheHitCount.set(0);
+            cacheMissCount.set(0);
+            lastCacheClearTime = currentTime;
+        }
+    }
+
+    /**
+     * 清理批量查询缓存（定期清理过期缓存）
+     */
+    private void clearExpiredBatchCache() {
+        long currentTime = System.currentTimeMillis();
+        // 2分钟过期
+        long BATCH_CACHE_EXPIRE_TIME = 2 * 60 * 1000;
+        if (currentTime - lastBatchCacheClearTime > BATCH_CACHE_EXPIRE_TIME) {
+            log.debug("批量查询缓存清理: 清理{}个缓存项", batchQueryCache.size());
+            batchQueryCache.clear();
+            lastBatchCacheClearTime = currentTime;
+        }
+    }
+
+    /**
+     * 批量获取用户信息（带缓存）
+     *
+     * @param userIds 用户ID集合
+     * @return 用户ID到用户的映射
+     */
+    private Map<Long, User> getUsersWithCache(Set<Long> userIds) {
+        clearExpiredUserCache();
+        clearExpiredBatchCache();
+
+        // 生成批量查询缓存键
+        String batchCacheKey = "users_batch_" + userIds.stream()
+                .sorted()
+                .map(String::valueOf)
+                .collect(Collectors.joining(","));
+        
+        // 先检查批量查询缓存
+        @SuppressWarnings("unchecked")
+        Map<Long, User> batchCachedResult = (Map<Long, User>) batchQueryCache.get(batchCacheKey);
+        if (batchCachedResult != null) {
+            log.debug("批量用户查询缓存命中: {}个用户", userIds.size());
+            return batchCachedResult;
+        }
+
+        Map<Long, User> result = new HashMap<>();
+        Set<Long> needQueryIds = new HashSet<>();
+
+        // 先从单个用户缓存中获取
+        for (Long userId : userIds) {
+            User cachedUser = userCache.get(userId);
+            if (cachedUser != null) {
+                result.put(userId, cachedUser);
+                cacheHitCount.incrementAndGet();
+            } else {
+                needQueryIds.add(userId);
+                cacheMissCount.incrementAndGet();
+            }
+        }
+
+        // 查询缓存中没有的用户
+        if (!needQueryIds.isEmpty()) {
+            List<User> users = userService.listByIds(needQueryIds);
+            for (User user : users) {
+                result.put(user.getId(), user);
+                // 检查缓存大小，如果超过限制则清理最旧的缓存
+                if (userCache.size() >= MAX_CACHE_SIZE) {
+                    clearOldestCache();
+                }
+                userCache.put(user.getId(), user); // 加入缓存
+            }
+
+            // 记录查询统计
+            log.debug("用户查询统计: 请求{}个用户ID，缓存命中{}个，数据库查询{}个，实际返回{}个",
+                    userIds.size(), userIds.size() - needQueryIds.size(), needQueryIds.size(), users.size());
+        }
+
+        // 缓存批量查询结果
+        batchQueryCache.put(batchCacheKey, new HashMap<>(result));
+        
+        return result;
+    }
+
+    /**
+     * 清理最旧的缓存（简单的LRU策略）
+     */
+    private void clearOldestCache() {
+        if (userCache.size() > MAX_CACHE_SIZE * 0.8) { // 清理到80%容量
+            int removeCount = userCache.size() - (int) (MAX_CACHE_SIZE * 0.8);
+            Iterator<Map.Entry<Long, User>> iterator = userCache.entrySet().iterator();
+            int removed = 0;
+            while (iterator.hasNext() && removed < removeCount) {
+                iterator.next();
+                iterator.remove();
+                removed++;
+            }
+            log.debug("清理了 {} 个最旧的用户缓存", removed);
+        }
+    }
+
+    /**
+     * 批量获取用户对图片的操作状态（带缓存优化）
+     *
+     * @param userId     用户ID
+     * @param pictureIds 图片ID列表
+     * @return 包含LIKE和COLLECT状态的Map
+     */
+    private Map<String, Set<Long>> getUserActionStatusBatch(Long userId, List<Long> pictureIds) {
+        if (userId == null || CollUtil.isEmpty(pictureIds)) {
+            Map<String, Set<Long>> result = new HashMap<>();
+            result.put("LIKE", new HashSet<>());
+            result.put("COLLECT", new HashSet<>());
+            return result;
+        }
+
+        // 清理过期缓存
+        long currentTime = System.currentTimeMillis();
+        // 2分钟过期
+        long ACTION_CACHE_EXPIRE_TIME = 2 * 60 * 1000;
+        if (currentTime - lastActionCacheClearTime > ACTION_CACHE_EXPIRE_TIME) {
+            userActionCache.clear();
+            lastActionCacheClearTime = currentTime;
+            log.debug("用户操作缓存已清理");
+        }
+
+        Map<String, Set<Long>> result = new HashMap<>();
+        Set<Long> likedSet = new HashSet<>();
+        Set<Long> collectedSet = new HashSet<>();
+
+        // 检查缓存
+        String likeCacheKey = userId + ":LIKE";
+        String collectCacheKey = userId + ":COLLECT";
+        Set<Long> cachedLiked = userActionCache.get(likeCacheKey);
+        Set<Long> cachedCollected = userActionCache.get(collectCacheKey);
+
+        if (cachedLiked != null && cachedCollected != null) {
+            // 从缓存中获取交集
+            likedSet = pictureIds.stream()
+                    .filter(cachedLiked::contains)
+                    .collect(Collectors.toSet());
+            collectedSet = pictureIds.stream()
+                    .filter(cachedCollected::contains)
+                    .collect(Collectors.toSet());
+        } else {
+            // 查询数据库（一次性查询所有操作类型）
+            String queryKey = "user_action_" + userId + "_" + pictureIds.size();
+            if (checkQueryDeduplication(queryKey)) {
+                List<UserPictureAction> actions = userPictureActionMapper.selectList(
+                        new QueryWrapper<UserPictureAction>()
+                                .eq("user_id", userId)
+                                .in("picture_id", pictureIds)
+                                .in("action_type", "LIKE", "COLLECT")
+                                .eq("status", 1)
+                );
+
+                // 分别处理LIKE和COLLECT
+                for (UserPictureAction action : actions) {
+                    if ("LIKE".equals(action.getActionType())) {
+                        likedSet.add(action.getPictureId());
+                    } else if ("COLLECT".equals(action.getActionType())) {
+                        collectedSet.add(action.getPictureId());
+                    }
+                }
+
+                // 缓存结果
+                userActionCache.put(likeCacheKey, likedSet);
+                userActionCache.put(collectCacheKey, collectedSet);
+            } else {
+                // 查询被去重，返回空结果
+                log.debug("用户操作状态查询被去重: userId={}, pictureCount={}", userId, pictureIds.size());
+            }
+        }
+
+        result.put("LIKE", likedSet);
+        result.put("COLLECT", collectedSet);
+        return result;
+    }
+
+    /**
+     * 获取用户对图片的操作状态（带缓存）
+     *
+     * @param userId     用户ID
+     * @param pictureIds 图片ID列表
+     * @param actionType 操作类型（LIKE/COLLECT）
+     * @return 用户已操作的图片ID集合
+     */
+    private Set<Long> getUserActionStatus(Long userId, List<Long> pictureIds, String actionType) {
+        Map<String, Set<Long>> actionMap = getUserActionStatusBatch(userId, pictureIds);
+        return actionMap.get(actionType);
+    }
+
+    /**
+     * 获取Space信息（带缓存）
+     *
+     * @param spaceIds Space ID集合
+     * @return Space ID到Space的映射
+     */
+    private Map<Long, Space> getSpacesWithCache(Set<Long> spaceIds) {
+        if (CollUtil.isEmpty(spaceIds)) {
+            return new HashMap<>();
+        }
+
+        // 清理过期缓存
+        long currentTime = System.currentTimeMillis();
+        // 10分钟过期
+        long SPACE_CACHE_EXPIRE_TIME = 10 * 60 * 1000;
+        if (currentTime - lastSpaceCacheClearTime > SPACE_CACHE_EXPIRE_TIME) {
+            spaceCache.clear();
+            lastSpaceCacheClearTime = currentTime;
+            log.debug("Space缓存已清理");
+        }
+
+        Map<Long, Space> result = new HashMap<>();
+        Set<Long> needQueryIds = new HashSet<>();
+
+        // 先从缓存中获取
+        for (Long spaceId : spaceIds) {
+            Space cachedSpace = spaceCache.get(spaceId);
+            if (cachedSpace != null) {
+                result.put(spaceId, cachedSpace);
+            } else {
+                needQueryIds.add(spaceId);
+            }
+        }
+
+        // 查询缓存中没有的Space
+        if (!needQueryIds.isEmpty()) {
+            List<Space> spaces = spaceService.listByIds(needQueryIds);
+            for (Space space : spaces) {
+                result.put(space.getId(), space);
+                spaceCache.put(space.getId(), space); // 加入缓存
+            }
+        }
+
+        return result;
+    }
+
+    /**
+     * 检查查询去重（避免短时间内重复查询）
+     *
+     * @param queryKey 查询键
+     * @return true表示可以查询，false表示需要去重
+     */
+    private boolean checkQueryDeduplication(String queryKey) {
+        long currentTime = System.currentTimeMillis();
+        Long lastQueryTime = queryTimestampCache.get(queryKey);
+        // 1秒内去重
+        long QUERY_REPEAT_TIME = 1000;
+        if (lastQueryTime == null || currentTime - lastQueryTime > QUERY_REPEAT_TIME) {
+            queryTimestampCache.put(queryKey, currentTime);
+            return true;
+        }
+
+        log.debug("查询去重: {} 在{}ms内重复查询", queryKey, currentTime - lastQueryTime);
+        return false;
+    }
+
+    /**
+     * 批量转换图片列表为VO列表（优化版本，避免N+1查询）
+     *
+     * @param pictures 图片列表
+     * @param request  HTTP请求
+     * @return PictureVO列表
+     */
+    private List<PictureVO> convertPicturesToVOs(List<Picture> pictures, HttpServletRequest request) {
+        if (CollUtil.isEmpty(pictures)) {
+            return Collections.emptyList();
+        }
+
+        // 1. 提取所有需要查询的用户ID（使用Set去重）
+        Set<Long> userIdSet = pictures.stream()
+                .map(Picture::getUserId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+
+        // 2. 批量查询用户信息（带缓存优化）
+        Map<Long, User> userMap = getUsersWithCache(userIdSet);
+
+        // 3. 批量查询Space信息（带缓存优化）
+        Set<Long> spaceIdSet = pictures.stream()
+                .map(Picture::getSpaceId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        Map<Long, Space> spaceMap = getSpacesWithCache(spaceIdSet);
+
+        // 4. 查询当前用户对这些图片的操作状态（点赞、收藏）- 使用批量缓存优化
+        List<Long> pictureIdList = pictures.stream().map(Picture::getId).collect(Collectors.toList());
+        User loginUser = userService.getLoginUserSafely(request);
+        Set<Long> likedPictureIdSet = new HashSet<>();
+        Set<Long> collectedPictureIdSet = new HashSet<>();
+
+        if (loginUser != null && CollUtil.isNotEmpty(pictureIdList)) {
+            // 使用批量缓存获取用户操作状态（一次性查询LIKE和COLLECT）
+            Map<String, Set<Long>> actionMap = getUserActionStatusBatch(loginUser.getId(), pictureIdList);
+            likedPictureIdSet = actionMap.get("LIKE");
+            collectedPictureIdSet = actionMap.get("COLLECT");
+        }
+
+        // 5. 单次遍历完成实体转换和数据填充
+        final Set<Long> finalLikedPictureIdSet = likedPictureIdSet;
+        final Set<Long> finalCollectedPictureIdSet = collectedPictureIdSet;
+
+        return pictures.stream().map(picture -> {
+            // entity -> vo
+            PictureVO pictureVO = PictureVO.convertToPictureVO(picture);
+
+            // 从Map中获取关联的用户信息（高效O(1)查询）
+            User user = userMap.get(picture.getUserId());
+            pictureVO.setUserVO(userService.getUserVO(user));
+
+            // 从Map中获取关联的Space信息（高效O(1)查询）
+            Space space = spaceMap.get(picture.getSpaceId());
+            if (space != null) {
+                // 如果需要Space信息，可以在这里设置
+                // pictureVO.setSpaceVO(spaceService.getSpaceVO(space, request));
+            }
+
+            // 设置分享量显示控制
+            setShareCountDisplayControl(pictureVO, request);
+
+            // 设置当前用户的操作状态
+            pictureVO.setLiked(finalLikedPictureIdSet.contains(picture.getId()));
+            pictureVO.setCollected(finalCollectedPictureIdSet.contains(picture.getId()));
+
+            return pictureVO;
+        }).collect(Collectors.toList());
+    }
+
+    /**
+     * 获取图片VO（公共访问版本，仅显示图片和作者信息）
+     *
+     * @param picture 图片实体
+     * @param request HTTP请求
+     * @return 图片VO
+     */
+    @Override
+    public PictureVO getPictureVOForPublic(Picture picture, HttpServletRequest request) {
+        if (picture == null) {
+            return null;
+        }
+
+        // entity -> vo
+        PictureVO pictureVO = PictureVO.convertToPictureVO(picture);
+
+        // 获取作者信息
+        User user = userService.getById(picture.getUserId());
+        pictureVO.setUserVO(userService.getUserVO(user));
+
+        // 未登录用户不显示操作状态
+        pictureVO.setLiked(false);
+        pictureVO.setCollected(false);
+        
+        // 不显示权限列表
+        pictureVO.setPermissionList(Collections.emptyList());
+
+        return pictureVO;
+    }
+
+    /**
+     * 获取图片分页VO（公共访问版本，支持未登录用户）
+     * 仅显示公共图库的图片，不显示用户操作状态
+     *
+     * @param picturePage 图片分页对象
+     * @param request     HTTP请求
+     * @return 包装后的分页对象
+     */
+    @Override
+    public Page<PictureVO> getPictureVOPageForPublic(Page<Picture> picturePage, HttpServletRequest request) {
+        List<Picture> pictures = picturePage.getRecords();
+        if (CollectionUtils.isEmpty(pictures)) {
+            return new Page<>();
+        }
+        
+        // 1. 关联查询用户信息
+        Set<Long> userIdSet = pictures.stream().map(Picture::getUserId).collect(Collectors.toSet());
+        Map<Long, List<User>> userIdUserListMap = userService.listByIds(userIdSet).stream()
+                .collect(Collectors.groupingBy(User::getId));
+        
+        // 2. 填充信息
+        List<PictureVO> pictureVOList = pictures.stream().map(picture -> {
+            // entity -> vo
+            PictureVO pictureVO = PictureVO.convertToPictureVO(picture);
+            
+            // 填充用户信息
+            Long userId = picture.getUserId();
+            User user = null;
+            if (userIdUserListMap.containsKey(userId)) {
+                user = userIdUserListMap.get(userId).get(0);
+            }
+            pictureVO.setUserVO(userService.getUserVO(user));
+            
+            // 未登录用户不显示操作状态
+            pictureVO.setLiked(false);
+            pictureVO.setCollected(false);
+            
+            // 不显示权限列表
+            pictureVO.setPermissionList(Collections.emptyList());
+            
+            return pictureVO;
+        }).collect(Collectors.toList());
+        
+        // 3. 封装返回
+        Page<PictureVO> pictureVOPage = new Page<>(picturePage.getCurrent(), picturePage.getSize(), picturePage.getTotal());
+        pictureVOPage.setRecords(pictureVOList);
+        return pictureVOPage;
+    }
+
+    /**
+     * 清理图片相关的所有缓存
+     * 包括：Redis推荐缓存、图片计数缓存等
+     *
+     * @param pictureId 图片ID
+     */
+    private void clearPictureCaches(Long pictureId) {
+        ThrowUtils.throwIf(pictureId == null || pictureId <= 0, ErrorCode.PARAMETER_ERROR, "无效图片");
+        try {
+            // 1. 清理Redis推荐缓存中的图片ID
+            redisRankServiceImpl.removePictureFromRank(pictureId);
+            // 2. 清理图片计数缓存（如果有的话）
+            // 这里可以添加其他需要清理的缓存
+        } catch (Exception e) {
+            log.error("清理图片{}缓存失败: {}", pictureId, e.getMessage(), e);
+        }
+    }
 }
+
+
 
 
 

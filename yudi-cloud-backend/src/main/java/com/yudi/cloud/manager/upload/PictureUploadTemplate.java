@@ -51,11 +51,11 @@ public abstract class PictureUploadTemplate {
         String dateStr = DateUtil.format(new Date(), "yyyyMMdd");
         String uuid = UUID.randomUUID().toString().substring(0, 8);
         String originalFileName = getOriginalFileName(inputSource);
-        String suffix = FileUtil.getSuffix(URLUtil.getPath(getOriginalFileName(inputSource)));
+        String suffix = FileUtil.getSuffix(originalFileName);
         // 拼接新的文件名，20250802_a1b2c3d4.jpg
         String uploadFileName = String.format("%s_%s.%s", dateStr, uuid, suffix);
         // 处理ai扩图的文件路径
-        if (uploadFileName.contains("?")){
+        if (uploadFileName.contains("?")) {
             uploadFileName = uploadFileName.split("\\?")[0];
         }
         // 构建完整的上传路径,/avatar/20250802_a1b2c3d4.jpg
@@ -73,13 +73,13 @@ public abstract class PictureUploadTemplate {
             // 获得图片处理结果
             ProcessResults processResults = putObjectResult.getCiUploadResult().getProcessResults();
             List<CIObject> objectList = processResults.getObjectList();
-            if (CollUtil.isNotEmpty(objectList)){
+            if (CollUtil.isNotEmpty(objectList)) {
                 CIObject compressedCiObject = objectList.get(0);
                 CIObject thumbnailObject = compressedCiObject;
                 if (objectList.size() > 1) {
                     thumbnailObject = objectList.get(1);
                 }
-                return getPictureUploadDTO(originalFileName, compressedCiObject, thumbnailObject, imageInfo);
+                return getPictureUploadDTO(originalFileName, compressedCiObject, thumbnailObject, imageInfo, uploadPath);
             }
             return getPictureUploadDTO(originalFileName, imageInfo, uploadPath, tempFile);
         } catch (Exception e) {
@@ -110,29 +110,44 @@ public abstract class PictureUploadTemplate {
      *
      * @param originalFilename   原始文件名
      * @param compressedCiObject 压缩后的对象
-     * @param thumbnailCiObject 缩略图对象
-     * @param imageInfo    图片信息
+     * @param thumbnailCiObject  缩略图对象
+     * @param imageInfo          图片信息
+     * @param uploadPath         上传路径
      * @return
      */
     private PictureUploadDTO getPictureUploadDTO(String originalFilename, CIObject compressedCiObject, CIObject thumbnailCiObject,
-                                                 ImageInfo imageInfo) {
+                                                 ImageInfo imageInfo, String uploadPath) {
         // 计算宽高
         int picWidth = compressedCiObject.getWidth();
         int picHeight = compressedCiObject.getHeight();
         double picScale = NumberUtil.round(picWidth * 1.0 / picHeight, 2).doubleValue();
         // 封装返回结果
         PictureUploadDTO pictureUploadDTO = new PictureUploadDTO();
-        // 设置压缩后的原图地址
-        pictureUploadDTO.setUrl(cosClientConfig.getHost() + "/" + compressedCiObject.getKey());
+        // 设置原图地址（保持原始格式）
+        pictureUploadDTO.setUrl(cosClientConfig.getHost() + "/" + uploadPath);
         pictureUploadDTO.setPicName(FileUtil.mainName(originalFilename));
         pictureUploadDTO.setPicSize(compressedCiObject.getSize().longValue());
         pictureUploadDTO.setPicWidth(picWidth);
         pictureUploadDTO.setPicHeight(picHeight);
         pictureUploadDTO.setPicScale(picScale);
-        pictureUploadDTO.setPicFormat(compressedCiObject.getFormat());
+        // 使用ImageInfo检测到的实际图片格式，而不是文件名扩展名
+        // ImageInfo.getFormat()返回的是腾讯云COS检测到的真实图片格式
+        String actualFormat = imageInfo.getFormat();
+        // 统一格式名称：jpeg -> jpg
+        if ("jpeg".equals(actualFormat)) {
+            actualFormat = "jpg";
+        }
+        pictureUploadDTO.setPicFormat(actualFormat);
         pictureUploadDTO.setPicColor(imageInfo.getAve());
         // 设置缩略图地址
-        pictureUploadDTO.setThumbnailUrl(cosClientConfig.getHost() + "/" + thumbnailCiObject.getKey());
+        if (compressedCiObject.getSize().longValue() > 20 * 1024) {
+            pictureUploadDTO.setThumbnailUrl(cosClientConfig.getHost() + "/" + thumbnailCiObject.getKey());
+        }
+
+        // 设置WebP格式地址（根据上传路径生成）
+        String webpKey = FileUtil.mainName(uploadPath) + ".webp";
+        pictureUploadDTO.setWebpUrl(cosClientConfig.getHost() + "/" + webpKey);
+
         // 返回可访问的地址
         return pictureUploadDTO;
     }
@@ -160,8 +175,25 @@ public abstract class PictureUploadTemplate {
         pictureUploadDTO.setPicWidth(picWidth);
         pictureUploadDTO.setPicHeight(picHeight);
         pictureUploadDTO.setPicScale(picScale);
-        pictureUploadDTO.setPicFormat(imageInfo.getFormat());
+        // 使用ImageInfo检测到的实际图片格式
+        String actualFormat = imageInfo.getFormat();
+        // 统一格式名称：jpeg -> jpg
+        if ("jpeg".equals(actualFormat)) {
+            actualFormat = "jpg";
+        }
+        pictureUploadDTO.setPicFormat(actualFormat);
         pictureUploadDTO.setPicColor(imageInfo.getAve());
+
+        // 设置WebP格式地址（根据上传路径生成）
+        String webpKey = FileUtil.mainName(uploadPath) + ".webp";
+        pictureUploadDTO.setWebpUrl(cosClientConfig.getHost() + "/" + webpKey);
+
+        // 只有当图片大于20kb时才设置缩略图URL
+        if (FileUtil.size(tempFile) > 20 * 1024) {
+            String thumbnailKey = FileUtil.mainName(uploadPath) + "_thumbnail." + FileUtil.getSuffix(uploadPath);
+            pictureUploadDTO.setThumbnailUrl(cosClientConfig.getHost() + "/" + thumbnailKey);
+        }
+
         return pictureUploadDTO;
     }
 

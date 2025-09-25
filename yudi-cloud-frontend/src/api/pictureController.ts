@@ -77,6 +77,21 @@ export async function getPictureVoByIdUsingGet(
   })
 }
 
+/** getPictureVOByIdPublic GET /api/picture/get/vo/public */
+export async function getPictureVOByIdPublicUsingGet(
+  // 叠加生成的Param类型 (非body参数swagger默认没有生成对象)
+  params: API.getPictureVOByIdUsingGETParams,
+  options?: { [key: string]: any }
+) {
+  return request<API.BaseResponsePictureVO_>('/api/picture/get/vo/public', {
+    method: 'GET',
+    params: {
+      ...params,
+    },
+    ...(options || {}),
+  })
+}
+
 /** listPictureByPage POST /api/picture/list/page */
 export async function listPictureByPageUsingPost(
   body: API.PictureQueryRequest,
@@ -113,6 +128,36 @@ export async function listPictureVoByPageWithCacheUsingPost(
   options?: { [key: string]: any }
 ) {
   return request<API.BaseResponsePagePictureVO_>('/api/picture/list/page/vo/cache', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    data: body,
+    ...(options || {}),
+  })
+}
+
+/** listPictureVOByPagePublic POST /api/picture/list/page/vo/public */
+export async function listPictureVoByPagePublicUsingPost(
+  body: API.PictureQueryRequest,
+  options?: { [key: string]: any }
+) {
+  return request<API.BaseResponsePagePictureVO_>('/api/picture/list/page/vo/public', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    data: body,
+    ...(options || {}),
+  })
+}
+
+/** getHomepageRecommendPictures POST /api/picture/recommend/homepage */
+export async function getHomepageRecommendPicturesUsingPost(
+  body: API.PictureQueryRequest,
+  options?: { [key: string]: any }
+) {
+  return request<API.BaseResponsePagePictureVO_>('/api/picture/recommend/homepage', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',

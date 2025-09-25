@@ -65,6 +65,7 @@
           placeholder="请输入分类"
           :options="categoryOptions"
           allow-clear
+          placement="bottomLeft"
         />
       </a-form-item>
       <a-form-item name="tags" label="标签">
@@ -74,6 +75,7 @@
           placeholder="请输入标签"
           :options="tagOptions"
           allow-clear
+          placement="bottomLeft"
         />
       </a-form-item>
       <a-form-item>
@@ -98,6 +100,7 @@ import ImageCropper from '@/components/ImageCropper.vue'
 import { EditOutlined, FullscreenOutlined } from '@ant-design/icons-vue'
 import ImageOutPainting from '@/components/ImageOutPainting.vue'
 import { getSpaceVoByIdUsingGet } from '@/api/spaceController.ts'
+import { notifyPictureUploaded } from '@/utils/crossPageCommunication'
 
 const router = useRouter()
 const route = useRoute()
@@ -117,6 +120,12 @@ const spaceId = computed(() => {
 const onSuccess = (newPicture: API.PictureVO) => {
   picture.value = newPicture
   pictureForm.name = newPicture.name
+  
+  // 通知其他页面图片上传成功，触发缓存刷新
+  if (newPicture.id) {
+    notifyPictureUploaded(newPicture.id, newPicture)
+    console.log('已通知其他页面图片上传成功:', newPicture.id)
+  }
 }
 
 /**
@@ -210,6 +219,12 @@ const doEditPicture = async () => {
 // 编辑成功事件
 const onCropSuccess = (newPicture: API.PictureVO) => {
   picture.value = newPicture
+  
+  // 通知其他页面图片更新成功，触发缓存刷新
+  if (newPicture.id) {
+    notifyPictureUploaded(newPicture.id, newPicture)
+    console.log('已通知其他页面图片编辑成功:', newPicture.id)
+  }
 }
 
 // ----- AI 扩图引用 -----
@@ -223,6 +238,12 @@ const doImagePainting = async () => {
 // AI 扩图保存事件
 const onImageOutPaintingSuccess = (newPicture: API.PictureVO) => {
   picture.value = newPicture
+  
+  // 通知其他页面图片更新成功，触发缓存刷新
+  if (newPicture.id) {
+    notifyPictureUploaded(newPicture.id, newPicture)
+    console.log('已通知其他页面AI扩图成功:', newPicture.id)
+  }
 }
 
 // 获取空间信息
@@ -255,6 +276,7 @@ const goToSpaceDetail = () => {
 #addPicturePage {
   max-width: 720px;
   margin: 0 auto;
+  position: relative; /* 确保页面容器有正确的定位上下文 */
 }
 
 #addPicturePage .edit-bar {

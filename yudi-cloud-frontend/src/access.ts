@@ -25,7 +25,13 @@ router.beforeEach(async (to, from, next) => {
     '/add_picture/batch', 
     '/add_space',
     '/my_space',
-    '/space_analyze'
+    '/space_analyze',
+    '/published_list',
+    '/liked_pictures',
+    '/collected_pictures',
+    '/profile',
+    '/user_exchange_vip',
+    '/search_picture'
   ]
   
   // 检查是否需要登录

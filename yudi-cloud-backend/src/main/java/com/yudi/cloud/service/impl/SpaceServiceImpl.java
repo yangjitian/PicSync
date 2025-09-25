@@ -9,7 +9,6 @@ import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.yudi.cloud.exception.BusinessException;
 import com.yudi.cloud.exception.ErrorCode;
 import com.yudi.cloud.exception.ThrowUtils;
-import com.yudi.cloud.manager.sharding.DynamicShardingManager;
 import com.yudi.cloud.model.dto.space.SpaceAddDTO;
 import com.yudi.cloud.model.dto.space.SpaceQueryDTO;
 import com.yudi.cloud.model.entity.Space;
@@ -25,7 +24,6 @@ import com.yudi.cloud.mapper.SpaceMapper;
 import com.yudi.cloud.service.SpaceUserService;
 import com.yudi.cloud.service.UserService;
 import org.springframework.beans.BeanUtils;
-import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 

@@ -24,6 +24,11 @@ public class PictureUploadDTO implements Serializable {
     private String thumbnailUrl;
 
     /**
+     * WebP格式图片 url
+     */
+    private String webpUrl;
+
+    /**
      * 图片名称
      */
     private String picName;

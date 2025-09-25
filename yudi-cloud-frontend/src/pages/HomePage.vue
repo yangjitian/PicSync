@@ -24,9 +24,9 @@
             class="sort-select"
             :get-popup-container="getPopupContainer"
           >
-            <a-select-option value="createTime">默认</a-select-option>
-            <a-select-option value="likeCount">点赞数</a-select-option>
+            <a-select-option value="recommend">默认</a-select-option>
             <a-select-option value="viewCount">浏览量</a-select-option>
+            <a-select-option value="likeCount">点赞数</a-select-option>
             <a-select-option value="collectCount">收藏数</a-select-option>
           </a-select>
         </div>
@@ -35,52 +35,95 @@
     
     <!-- 图片列表 -->
     <div class="picture-list-container">
+      <!-- 首次加载时显示骨架屏 -->
+      <PictureListSkeleton 
+        v-if="initialLoading && dataList.length === 0" 
+        :count="12"
+      />
+      <!-- 正常图片列表 -->
       <PictureList 
+        v-else
         :dataList="dataList" 
-        :loading="loading && searchParams.current === 1" 
+        :loading="loading && (searchParams.current || 1) === 1" 
         layoutMode="detailed"
         @picture-click="handlePictureClick"
       />
     </div>
     <!-- 加载更多提示 -->
-    <div v-if="loading && searchParams.current > 1" style="text-align: center; padding: 20px;">
+    <div v-if="loading && (searchParams.current || 1) > 1" style="text-align: center; padding: 20px;">
       <a-spin tip="加载中..." />
     </div>
-    <!-- 无限滚动哨兵 -->
-    <div ref="sentinel" style="height: 50px;"></div>
-    <a-empty v-if="!loading && noMoreData && dataList.length > 0" description="已经到底啦" />
-  </div>
+     <!-- 无限滚动哨兵 - 只在有数据且非加载状态时显示 -->
+     <div 
+       v-if="!noMoreData && dataList.length > 0" 
+       ref="sentinel" 
+       style="height: 20px; background: transparent;"
+     ></div>
+     <!-- 到底提示 -->
+     <a-empty v-if="!loading && noMoreData && dataList.length > 0" description="已经到底啦" />
+     <!-- 无数据提示 -->
+     <a-empty v-if="!loading && !initialLoading && dataList.length === 0" description="暂无数据" />
+     
+   </div>
 </template>
 
 <script setup lang="ts">
-import { onMounted, onBeforeUnmount, onActivated, reactive, ref, watch, nextTick } from 'vue'
+import { onMounted, onBeforeUnmount, onActivated, reactive, ref, watch, nextTick, computed } from 'vue'
 import { useRoute } from 'vue-router'
 import {
   listPictureTagCategoryUsingGet,
   listPictureVoByPageUsingPost,
+  listPictureVoByPagePublicUsingPost,
+  getHomepageRecommendPicturesUsingPost,
   addPictureViewUsingPost,
 } from '@/api/pictureController.ts'
+import { useLoginUserStore } from '@/stores/useLoginUserStore.ts'
 import { message } from 'ant-design-vue'
 import PictureList from '@/components/PictureList.vue'
+import PictureListSkeleton from '@/components/PictureListSkeleton.vue'
+import { cacheStrategies, initCacheCleanup, sessionCache, localCache } from '@/utils/cache'
+import { performanceMonitor, getLoadingStrategy, debounce, throttle } from '@/utils/performance'
+import { onPictureDeleted, onPictureUploaded, onPictureLiked, onPictureCollected, onPictureUpdated, crossPageComm } from '@/utils/crossPageCommunication'
 
 const route = useRoute()
+const loginUserStore = useLoginUserStore()
 
 // --- 核心数据和状态 ---
 const dataList = ref<API.PictureVO[]>([])
 const total = ref(0)
 const loading = ref(false) // 表示是否正在加载数据
 const noMoreData = ref(false) // 表示是否已加载所有数据
+const initialLoading = ref(true) // 表示是否是首次加载（用于显示骨架屏）
+const categoryLoading = ref(false) // 表示分类数据是否正在加载
+
+// --- 去重工具函数 ---
+const removeDuplicates = (pictures: API.PictureVO[]): API.PictureVO[] => {
+  const seen = new Set<number>()
+  return pictures.filter(picture => {
+    if (picture.id && seen.has(picture.id)) {
+      console.warn(`发现重复图片ID: ${picture.id}，已过滤`)
+      return false
+    }
+    if (picture.id) {
+      seen.add(picture.id)
+    }
+    return true
+  })
+}
+
+// --- 动态加载策略 ---
+const loadingStrategy = getLoadingStrategy()
 
 // --- 搜索条件 ---
 const searchParams = reactive<API.PictureQueryRequest>({
   current: 1,
-  pageSize: 12,
+  pageSize: loadingStrategy.pageSize, // 根据网络质量动态调整
   sortField: 'createTime',
   sortOrder: 'descend',
 })
 const categoryList = ref<string[]>([])
 const selectedCategory = ref<string>('all')
-const sortBy = ref<string>('createTime')
+const sortBy = ref<string>('recommend')
 
 // --- 下拉框容器配置 ---
 const getPopupContainer = () => {
@@ -89,11 +132,27 @@ const getPopupContainer = () => {
 }
 
 // --- 数据获取 ---
-const fetchData = async () => {
+const fetchData = async (useCache = true) => {
   if (loading.value || noMoreData.value) {
     return
   }
+  
+  // 防重复请求：检查是否在短时间内重复请求相同数据
+  const requestKey = `${sortBy.value}_${selectedCategory.value}_${searchParams.current}`
+  const now = Date.now()
+  const lastRequestTime = sessionStorage.getItem(`lastRequest_${requestKey}`)
+  
+  if (lastRequestTime && now - parseInt(lastRequestTime) < 1000) {
+    console.log('防重复请求：跳过重复的请求', requestKey)
+    return
+  }
+  
+  sessionStorage.setItem(`lastRequest_${requestKey}`, now.toString())
+  
   loading.value = true
+  
+  // 开始性能计时
+  performanceMonitor.startTiming('dataLoad')
 
   // 构造请求参数
   const params = {
@@ -106,23 +165,89 @@ const fetchData = async () => {
   }
 
   try {
-    const res = await listPictureVoByPageUsingPost(params)
+    // 优先尝试从缓存获取数据（仅首页且推荐排序）
+    if (useCache && searchParams.current === 1 && sortBy.value === 'recommend') {
+      const cachedData = cacheStrategies.recommendPictures.get(selectedCategory.value)
+      if (cachedData && cachedData.length > 0) {
+        dataList.value = cachedData
+        // 注意：不要将total设置为缓存数据长度，保持原有的total值
+        // 这样可以确保后续分页加载正常工作
+        initialLoading.value = false
+        loading.value = false
+        
+        // 记录缓存命中
+        performanceMonitor.recordCacheHit()
+        performanceMonitor.endTiming('dataLoad')
+        
+        // 从缓存加载后，准备加载下一页
+        searchParams.current = 2
+        noMoreData.value = false
+        
+        // 确保观察器正常工作
+        nextTick(() => {
+          setupObserver()
+        })
+        
+        return
+      } else {
+        // 记录缓存未命中
+        performanceMonitor.recordCacheMiss()
+      }
+    }
+
+    let res: any
+    
+    // 检查用户登录状态
+    const currentUser = loginUserStore.loginUser
+    
+    // 如果是默认排序（recommend），使用推荐算法
+    if (sortBy.value === 'recommend') {
+      res = await getHomepageRecommendPicturesUsingPost(params)
+    } else {
+      // 其他排序方式：根据登录状态选择接口
+      if (currentUser?.id) {
+        // 已登录用户使用普通查询接口
+        res = await listPictureVoByPageUsingPost(params)
+      } else {
+        // 未登录用户使用公开查询接口
+        res = await listPictureVoByPagePublicUsingPost(params)
+      }
+    }
+    
     if (res.data.code === 0 && res.data.data) {
       const newRecords = res.data.data.records ?? []
+      
       // 如果是第一页，则直接替换；否则，追加数据
       if (searchParams.current === 1) {
-        dataList.value = newRecords
+        // 对第一页数据进行去重
+        dataList.value = removeDuplicates(newRecords)
+        
+        // 缓存首页推荐数据
+        if (sortBy.value === 'recommend' && dataList.value.length > 0) {
+          cacheStrategies.recommendPictures.set(dataList.value, selectedCategory.value)
+        }
       } else {
-        dataList.value.push(...newRecords)
+        // 分页加载时，检查重复并去重
+        const existingIds = new Set(dataList.value.map((p: API.PictureVO) => p.id))
+        const uniqueNewRecords = newRecords.filter((p: API.PictureVO) => !existingIds.has(p.id))
+        
+        if (uniqueNewRecords.length > 0) {
+          // 对新数据进行去重后再添加
+          const deduplicatedNewRecords = removeDuplicates(uniqueNewRecords)
+          dataList.value.push(...deduplicatedNewRecords)
+          console.log(`分页加载: 新增${deduplicatedNewRecords.length}张图片，过滤掉${newRecords.length - deduplicatedNewRecords.length}张重复图片`)
+        } else {
+          console.log('分页加载: 所有图片都已存在，跳过添加')
+        }
       }
       total.value = res.data.data.total ?? 0
 
       // 判断是否还有更多数据
-      if (newRecords.length < searchParams.pageSize || dataList.value.length >= total.value) {
+      if (newRecords.length < (searchParams.pageSize || 10) || dataList.value.length >= total.value) {
         noMoreData.value = true
       } else {
         // 准备加载下一页
-        searchParams.current++
+        searchParams.current = (searchParams.current || 1) + 1
       }
     } else {
       message.error('获取数据失败，' + res.data.message)
@@ -131,6 +256,15 @@ const fetchData = async () => {
     message.error('获取数据失败，' + e.message)
   } finally {
     loading.value = false
+    initialLoading.value = false
+    
+    // 结束性能计时
+    performanceMonitor.endTiming('dataLoad')
+    
+    // 确保观察器在数据加载完成后正确工作
+    nextTick(() => {
+      setupObserver()
+    })
   }
 }
 
@@ -138,16 +272,54 @@ const fetchData = async () => {
 const doSearch = () => {
   searchParams.current = 1
   noMoreData.value = false
-  dataList.value = [] // 立即清空旧数据
-  fetchData()
+  dataList.value = []
+  total.value = 0
+  initialLoading.value = true // 重新搜索时重置为初始加载状态
+  
+  // 先断开现有观察器
+  if (observer) {
+    observer.disconnect()
+    observer = null
+  }
+  
+  // 重新设置观察器
+  nextTick(() => {
+    setupObserver()
+  })
+  
+  fetchData(false) // 搜索时不使用缓存，确保数据最新
 }
 
-const getCategoryOptions = async () => {
-  const res = await listPictureTagCategoryUsingGet()
-  if (res.data.code === 0 && res.data.data) {
-    categoryList.value = res.data.data.categoryList ?? []
-  } else {
-    message.error('获取分类列表失败，' + res.data.message)
+const getCategoryOptions = async (useCache = true) => {
+  categoryLoading.value = true
+  
+  try {
+    // 优先从缓存获取分类数据
+    if (useCache) {
+      const cachedCategories = cacheStrategies.categoryList.get()
+      if (cachedCategories && cachedCategories.length > 0) {
+        categoryList.value = cachedCategories
+        categoryLoading.value = false
+        return
+      }
+    }
+
+    const res = await listPictureTagCategoryUsingGet()
+    if (res.data.code === 0 && res.data.data) {
+      const categories = res.data.data.categoryList ?? []
+      categoryList.value = categories
+      
+      // 缓存分类数据
+      if (categories.length > 0) {
+        cacheStrategies.categoryList.set(categories)
+      }
+    } else {
+      message.error('获取分类列表失败，' + res.data.message)
+    }
+  } catch (error: any) {
+    message.error('获取分类列表失败，' + error.message)
+  } finally {
+    categoryLoading.value = false
   }
 }
 
@@ -155,24 +327,36 @@ const getCategoryOptions = async () => {
 const sentinel = ref<HTMLElement | null>(null)
 let observer: IntersectionObserver | null = null
 
+
 const setupObserver = () => {
-  if (observer) observer.disconnect()
+  // 先断开现有观察器
+  if (observer) {
+    observer.disconnect()
+    observer = null
+  }
+
+  // 确保哨兵元素存在
+  if (!sentinel.value) {
+    console.warn('哨兵元素不存在，无法设置观察器')
+    return
+  }
 
   observer = new IntersectionObserver(
     ([entry]) => {
       // 当哨兵元素进入视口、且没有在加载、且还有更多数据时，加载下一页
       if (entry && entry.isIntersecting && !loading.value && !noMoreData.value) {
-        fetchData()
+        console.log('触发无限滚动加载，当前页码:', searchParams.current)
+        fetchData(false) // 分页加载不使用缓存，页码会在 fetchData 内部自动递增
       }
     },
     {
       rootMargin: '0px 0px 400px 0px', // 提前400px开始加载
+      threshold: 0.1, // 当10%的哨兵元素可见时触发
     }
   )
 
-  if (sentinel.value) {
-    observer.observe(sentinel.value)
-  }
+  observer.observe(sentinel.value)
+  console.log('观察器已设置，哨兵元素:', sentinel.value)
 }
 
 // --- 监听查询参数变化 ---
@@ -213,14 +397,14 @@ const adjustStickyPosition = () => {
   stickyControls.value.style.top = `${headerHeight}px`
 }
 
-// 滚动监听器，检测滚动状态
-const handleScroll = () => {
+// 滚动监听器，检测滚动状态（使用节流优化性能）
+const handleScroll = throttle(() => {
   const scrollTop = window.pageYOffset || document.documentElement.scrollTop
   isScrolled.value = scrollTop > 50 // 滚动超过50px时认为是滚动状态
   
   // 调整下拉框位置
   adjustDropdownPosition()
-}
+}, 16) // 约60fps的刷新率
 
 // 调整下拉框位置
 const adjustDropdownPosition = () => {
@@ -240,19 +424,51 @@ const handleResize = () => {
 }
 
 // --- 生命周期钩子 ---
-onMounted(() => {
-  getCategoryOptions()
-  fetchData() // 初始加载
+onMounted(async () => {
+  // 开始页面加载计时
+  performanceMonitor.startTiming('pageLoad')
+  
+  // 初始化缓存清理
+  initCacheCleanup()
+  
+  // 检查是否有数据变化标记，如果有则清理缓存
+  const hasDataChanges = localStorage.getItem('hasDataChanges')
+  if (hasDataChanges === 'true') {
+    // 清理所有相关缓存
+    sessionCache.clear() // 清理推荐图片缓存
+    localCache.clear()   // 清理分类列表缓存
+    localStorage.removeItem('hasDataChanges')
+    console.log('检测到数据变化，已清理缓存')
+  }
+  
+  // 优化：先加载分类数据，再加载图片数据，避免并行请求导致的重复查询
+  try {
+    // 1. 先加载分类数据
+    await getCategoryOptions()
+    
+    // 2. 再加载图片数据
+    await fetchData()
+  } catch (error) {
+    message.error('初始数据加载失败')
+  }
+  
   setupObserver()
   
   // 调整固定位置
   nextTick(() => {
     adjustStickyPosition()
+    
+    // 结束页面加载计时
+    performanceMonitor.endTiming('pageLoad')
+    
   })
   
   // 监听窗口大小变化和滚动
   window.addEventListener('resize', handleResize)
   window.addEventListener('scroll', handleScroll, { passive: true })
+  
+  // 监听来自子窗口的消息
+  window.addEventListener('message', handleWindowMessage)
   
   // 监听下拉框的创建和更新
   setupDropdownObserver()
@@ -287,12 +503,39 @@ const setupDropdownObserver = () => {
   
   // 在组件卸载时清理观察器
   onBeforeUnmount(() => {
-    observer.disconnect()
+    if (observer) observer.disconnect()
   })
 }
 
 // 页面激活时刷新数据（仅在必要时）
 onActivated(() => {
+  console.log('主页页面激活，当前数据长度:', dataList.value.length)
+  
+  // 检查是否有数据变化标记
+  const hasDataChanges = localStorage.getItem('hasDataChanges')
+  if (hasDataChanges === 'true') {
+    // 清理缓存并强制刷新
+    sessionCache.clear() // 清理推荐图片缓存
+    localCache.clear()   // 清理分类列表缓存
+    localStorage.removeItem('hasDataChanges')
+    console.log('页面激活时检测到数据变化，已清理缓存')
+    
+    // 强制刷新数据
+    nextTick(() => {
+      doSearch()
+    })
+    return
+  }
+  
+  // 如果数据为空，立即加载数据
+  if (dataList.value.length === 0) {
+    console.log('页面激活时数据为空，立即加载数据')
+    nextTick(() => {
+      fetchData()
+    })
+    return
+  }
+  
   // 只在数据可能过期时才刷新
   const now = Date.now()
   const lastRefreshTime = localStorage.getItem('lastDataRefresh') || '0'
@@ -300,10 +543,13 @@ onActivated(() => {
   
   // 如果超过5分钟没有刷新，或者没有刷新记录，则刷新数据
   if (timeSinceLastRefresh > 5 * 60 * 1000 || lastRefreshTime === '0') {
+    console.log('页面激活时数据过期，刷新数据')
     nextTick(() => {
       doSearch() // 重新搜索会清空数据并重新加载
       localStorage.setItem('lastDataRefresh', now.toString())
     })
+  } else {
+    console.log('页面激活时数据未过期，跳过刷新')
   }
   
   // 总是刷新用户行为状态（这个比较轻量）
@@ -312,7 +558,27 @@ onActivated(() => {
 
 // 添加强制刷新函数，供外部调用
 const forceRefresh = () => {
-  doSearch()
+  // 检查是否有数据变化标记
+  const hasDataChanges = localStorage.getItem('hasDataChanges')
+  if (hasDataChanges === 'true') {
+    // 清理缓存并强制刷新
+    sessionCache.clear()
+    localCache.clear()
+    localStorage.removeItem('hasDataChanges')
+    console.log('检测到数据变化，已清理缓存')
+    doSearch()
+    return
+  }
+  
+  // 检查数据是否为空，如果为空则重新加载
+  if (dataList.value.length === 0) {
+    console.log('数据为空，重新加载数据')
+    doSearch()
+    return
+  }
+  
+  // 如果数据不为空，只刷新用户行为状态，不重新加载数据
+  console.log('数据已存在，跳过重新加载')
 }
 
 // 将刷新函数暴露到全局，供其他组件调用
@@ -336,8 +602,170 @@ const handleGlobalRefresh = () => {
 // 添加全局事件监听
 onMounted(() => {
   window.addEventListener('refreshHomePage', handleGlobalRefresh)
+  
+  // 使用新的跨页面通信工具监听图片删除事件
+  onPictureDeleted(handlePictureDeleted)
+  
+  // 监听图片上传事件
+  onPictureUploaded(handlePictureUploaded)
+  
+  // 监听图片状态变化事件
+  onPictureLiked(handlePictureLiked)
+  onPictureCollected(handlePictureCollected)
+  onPictureUpdated(handlePictureUpdated)
 })
 
+// 处理图片上传事件
+const handlePictureUploaded = (event: any) => {
+  const { pictureId, data: pictureData } = event
+  console.log('收到图片上传事件:', pictureId, pictureData)
+  
+  // 清理缓存，确保下次加载时获取最新数据
+  sessionCache.clear()
+  localCache.clear()
+  
+  // 检查是否已存在相同ID的图片，避免重复添加
+  const existingIndex = dataList.value.findIndex(p => p.id === pictureId)
+  
+  // 如果当前是推荐排序且是第一页，将新图片添加到列表顶部
+  if (sortBy.value === 'recommend' && searchParams.current === 1 && pictureData && existingIndex === -1) {
+    // 将新图片添加到列表顶部，然后进行去重
+    dataList.value.unshift(pictureData)
+    dataList.value = removeDuplicates(dataList.value)
+    console.log('已将新图片添加到列表顶部:', pictureId)
+    
+    // 确保观察器正常工作
+    nextTick(() => {
+      setupObserver()
+    })
+  } else if (existingIndex !== -1) {
+    // 如果图片已存在，更新数据而不是添加
+    dataList.value[existingIndex] = pictureData
+    console.log('已更新现有图片数据:', pictureId)
+  } else {
+    // 其他情况，强制刷新数据
+    console.log('强制刷新数据以获取最新图片')
+    nextTick(() => {
+      doSearch()
+      // 确保在数据加载完成后重新设置观察器
+      setTimeout(() => {
+        setupObserver()
+        console.log('图片上传后重新初始化观察器')
+      }, 100)
+    })
+  }
+}
+
+// 处理图片删除事件
+const handlePictureDeleted = (event: any) => {
+  const { pictureId } = event
+  console.log('收到图片删除事件:', pictureId)
+  
+  // 立即清理缓存并刷新
+  sessionCache.clear()
+  localCache.clear()
+  
+  // 从当前数据列表中移除已删除的图片
+  if (pictureId) {
+    const index = dataList.value.findIndex(p => p.id === pictureId)
+    if (index !== -1) {
+      dataList.value.splice(index, 1)
+      console.log('已从列表中移除图片:', pictureId)
+    }
+  }
+  
+  // 强制刷新数据并确保观察器正确重新初始化
+  nextTick(() => {
+    doSearch()
+    // 确保在数据加载完成后重新设置观察器
+    setTimeout(() => {
+      setupObserver()
+      console.log('删除图片后重新初始化观察器')
+    }, 100)
+  })
+}
+
+// 处理图片点赞事件
+const handlePictureLiked = (event: any) => {
+  const { pictureId, data } = event
+  console.log('收到图片点赞事件:', pictureId, data)
+  
+  // 更新列表中的图片数据
+  const picture = dataList.value.find(p => p.id === pictureId)
+  if (picture && data?.liked !== undefined) {
+    (picture as any).liked = data.liked
+    // 同时更新点赞数量
+    if (data.likeCount !== undefined) {
+      picture.likeCount = data.likeCount
+    }
+    console.log('已更新图片点赞状态:', pictureId, data.liked, '点赞数:', data.likeCount)
+  }
+}
+
+// 处理图片收藏事件
+const handlePictureCollected = (event: any) => {
+  const { pictureId, data } = event
+  console.log('收到图片收藏事件:', pictureId, data)
+  
+  // 更新列表中的图片数据
+  const picture = dataList.value.find(p => p.id === pictureId)
+  if (picture && data?.collected !== undefined) {
+    (picture as any).collected = data.collected
+    // 同时更新收藏数量
+    if (data.collectCount !== undefined) {
+      picture.collectCount = data.collectCount
+    }
+    console.log('已更新图片收藏状态:', pictureId, data.collected, '收藏数:', data.collectCount)
+  }
+}
+
+// 处理图片更新事件
+const handlePictureUpdated = (event: any) => {
+  const { pictureId, data } = event
+  console.log('收到图片更新事件:', pictureId, data)
+  
+  // 更新列表中的图片数据
+  const picture = dataList.value.find(p => p.id === pictureId)
+  if (picture && data) {
+    if (data.liked !== undefined) {
+      (picture as any).liked = data.liked
+    }
+    if (data.collected !== undefined) {
+      (picture as any).collected = data.collected
+    }
+    if (data.likeCount !== undefined) {
+      picture.likeCount = data.likeCount
+    }
+    if (data.collectCount !== undefined) {
+      picture.collectCount = data.collectCount
+    }
+    if (data.shareCount !== undefined) {
+      picture.shareCount = data.shareCount
+    }
+    console.log('已更新图片数据:', pictureId, data)
+  }
+}
+
+
+// --- 处理来自子窗口的消息 ---
+const handleWindowMessage = (event: MessageEvent) => {
+  // 验证消息来源
+  if (event.origin !== window.location.origin) {
+    return
+  }
+  
+  const { type, pictureId, timestamp } = event.data
+  
+  if (type === 'pictureDeleted') {
+    console.log('收到子窗口删除消息:', pictureId)
+    
+    // 检查消息时间戳，避免处理过期消息
+    const now = Date.now()
+    if (now - timestamp < 30000) { // 30秒内的消息才处理
+      handlePictureDeleted({ detail: { pictureId } })
+    }
+  }
+}
 
 // --- 图片点击处理 ---
 const handlePictureClick = async (picture: API.PictureVO) => {
@@ -347,18 +775,20 @@ const handlePictureClick = async (picture: API.PictureVO) => {
       const res = await addPictureViewUsingPost(picture.id)
       if (res.data.code === 0) {
         const responseData = res.data.data
-        const success = responseData.success
-        const serverViewCount = responseData.viewCount
-        
-        // 智能UI更新：基于服务器响应
-        const pictureIndex = dataList.value.findIndex(p => p.id === picture.id)
-        if (pictureIndex !== -1) {
-          if (success) {
-            // 成功增加浏览量，使用服务器计数
-            dataList.value[pictureIndex].viewCount = serverViewCount
-          } else {
-            // 今天已浏览过，使用服务器计数
-            dataList.value[pictureIndex].viewCount = serverViewCount
+        if (responseData) {
+          const success = responseData.success
+          const serverViewCount = responseData.viewCount
+          
+          // 智能UI更新：基于服务器响应
+          const pictureIndex = dataList.value.findIndex(p => p.id === picture.id)
+          if (pictureIndex !== -1) {
+            if (success) {
+              // 成功增加浏览量，使用服务器计数
+              dataList.value[pictureIndex].viewCount = serverViewCount
+            } else {
+              // 今天已浏览过，使用服务器计数
+              dataList.value[pictureIndex].viewCount = serverViewCount
+            }
           }
         }
       }
@@ -372,13 +802,26 @@ const handlePictureClick = async (picture: API.PictureVO) => {
 }
 
 onBeforeUnmount(() => {
+  // 清理无限滚动观察器
   if (observer) {
     observer.disconnect()
+    observer = null
   }
   // 清理事件监听器
   window.removeEventListener('resize', handleResize)
   window.removeEventListener('scroll', handleScroll)
   window.removeEventListener('refreshHomePage', handleGlobalRefresh)
+  window.removeEventListener('message', handleWindowMessage)
+  
+  // 清理跨页面通信
+  crossPageComm.destroy()
+})
+
+// 重新激活时重新设置观察器（用于keep-alive组件）
+onActivated(() => {
+  nextTick(() => {
+    setupObserver()
+  })
 })
 </script>
 
@@ -448,6 +891,7 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 12px;
   min-width: 220px;
+  margin-left: 30px;
 }
 
 .filter-label {

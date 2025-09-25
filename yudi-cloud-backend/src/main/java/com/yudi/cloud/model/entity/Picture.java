@@ -31,6 +31,11 @@ public class Picture implements Serializable {
     private String thumbnailUrl;
 
     /**
+     * WebP格式图片 url
+     */
+    private String webpUrl;
+
+    /**
      * 图片名称
      */
     private String name;
@@ -93,16 +98,19 @@ public class Picture implements Serializable {
     /**
      * 创建时间
      */
+    @TableField(fill = FieldFill.INSERT)
     private Date createTime;
 
     /**
      * 编辑时间
      */
+    @TableField(fill = FieldFill.INSERT_UPDATE)
     private Date editTime;
 
     /**
      * 更新时间
      */
+    @TableField(fill = FieldFill.INSERT_UPDATE)
     private Date updateTime;
 
     /**
@@ -149,6 +157,17 @@ public class Picture implements Serializable {
      * 下载量
      */
     private Long downloadCount;
+
+    /**
+     * 推荐算法得分
+     */
+    private Double recommendScore = 0.0;
+
+    /**
+     * 推荐分最后更新时间
+     */
+    @TableField(fill = FieldFill.INSERT)
+    private Date scoreUpdatedAt;
 
     /**
      * 是否删除

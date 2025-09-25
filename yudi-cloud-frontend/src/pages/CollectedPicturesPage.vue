@@ -62,13 +62,9 @@
             @change="handleSearch"
             class="search-input-small"
           >
-            <a-select-option value="风景">风景</a-select-option>
-            <a-select-option value="人物">人物</a-select-option>
-            <a-select-option value="动物">动物</a-select-option>
-            <a-select-option value="建筑">建筑</a-select-option>
-            <a-select-option value="美食">美食</a-select-option>
-            <a-select-option value="艺术">艺术</a-select-option>
-            <a-select-option value="其他">其他</a-select-option>
+            <a-select-option v-for="option in categoryOptions" :key="option.value" :value="option.value">
+              {{ option.label }}
+            </a-select-option>
           </a-select>
         </div>
       </div>
@@ -85,7 +81,7 @@
           </div>
         </div>
         
-        <div class="filter-item">
+        <div class="search-item sort-item">
           <label class="search-label">排序方式：</label>
           <a-select
             v-model:value="sortBy"
@@ -101,7 +97,7 @@
           </a-select>
         </div>
         
-        <div class="filter-item">
+        <div class="search-item sort-order-item">
           <label class="search-label">排序顺序：</label>
           <a-select
             v-model:value="sortOrder"
@@ -163,7 +159,7 @@
         >
           <div class="picture-container">
             <img
-              :src="picture.thumbnailUrl || picture.url"
+              :src="getDisplayImageUrl(picture)"
               :alt="picture.name"
               class="picture-image"
               @error="handleImageError"
@@ -262,6 +258,7 @@
           :total="totalCount"
           :show-size-changer="true"
           :show-quick-jumper="true"
+          :page-size-options="['8', '12', '16', '20']"
           :show-total="(total: number, range: [number, number]) => `共 ${total} 张图片，当前显示 ${range[0]}-${range[1]} 张`"
           @change="handlePageChange"
           @show-size-change="handlePageSizeChange"
@@ -286,10 +283,11 @@ import {
   SearchOutlined,
   TagOutlined
 } from '@ant-design/icons-vue'
-import { getUserCollectedPicturesUsingPost, getUserStatsUsingGet, searchCollectedPicturesByColorUsingPost } from '@/api/pictureController.ts'
+import { getUserCollectedPicturesUsingPost, getUserStatsUsingGet, searchCollectedPicturesByColorUsingPost, listPictureTagCategoryUsingGet } from '@/api/pictureController.ts'
 import { togglePictureLikeUsingPost, togglePictureCollectUsingPost } from '@/api/pictureController.ts'
 import { ColorPicker } from 'vue3-colorpicker'
 import 'vue3-colorpicker/style.css'
+import { onPictureUploaded } from '@/utils/crossPageCommunication'
 
 const router = useRouter()
 
@@ -317,6 +315,9 @@ const searchParams = ref({
   category: '',
   color: ''
 })
+
+// 分类选项
+const categoryOptions = ref<Array<{label: string, value: string}>>([])
 
 // 操作状态管理 - 增强防连点机制
 const operationStatus = ref<Record<string, { isLoading: boolean }>>({})
@@ -368,7 +369,13 @@ const setOperationState = (pictureId: number | string | undefined, operation: 'l
   }
 }
 
-    // 加载数据
+// --- 图片显示逻辑 ---
+const getDisplayImageUrl = (picture: API.PictureVO) => {
+  // 收藏页显示策略：优先缩略图，其次WebP，最后原图
+  return picture.thumbnailUrl || picture.webpUrl || picture.url
+}
+
+// 加载数据
 const loadData = async () => {
   try {
     loading.value = true
@@ -417,7 +424,7 @@ const loadData = async () => {
       }
     }
   } catch (error) {
-    console.error('加载收藏图片失败:', error)
+    message.error('加载收藏图片失败')
     message.error('加载失败，请稍后重试')
     dataList.value = []
     totalCount.value = 0
@@ -541,7 +548,7 @@ const handleToggleLike = async (picture: API.PictureVO) => {
       message.error(res.data.message || '操作失败')
     }
   } catch (error) {
-    console.error('点赞操作失败:', error)
+    message.error('点赞操作失败')
     message.error('操作失败，请稍后重试')
   } finally {
     setOperationState(picture.id, 'like', false)
@@ -571,7 +578,7 @@ const handleUncollect = async (picture: API.PictureVO) => {
       message.error(res.data.message || '操作失败')
     }
   } catch (error) {
-    console.error('取消收藏失败:', error)
+    message.error('取消收藏失败')
     message.error('操作失败，请稍后重试')
   } finally {
     setOperationState(picture.id, 'collect', false)
@@ -587,13 +594,44 @@ const loadUserStats = async () => {
       userStats.value = res.data.data as any
     }
   } catch (error) {
-    console.error('加载用户统计数据失败:', error)
+    message.error('加载用户统计数据失败')
   }
+}
+
+// 获取分类选项
+const getCategoryOptions = async () => {
+  try {
+    const res = await listPictureTagCategoryUsingGet()
+    if (res.data.code === 0 && res.data.data) {
+      categoryOptions.value = (res.data.data.categoryList ?? []).map((data: string) => ({
+        label: data,
+        value: data
+      }))
+    } else {
+      message.error('获取分类列表失败，' + res.data.message)
+    }
+  } catch (error: any) {
+    message.error('获取分类列表失败，' + error.message)
+  }
+}
+
+// 处理图片上传事件
+const handlePictureUploaded = (event: any) => {
+  const { pictureId, data: pictureData } = event
+  console.log('CollectedPicturesPage 收到图片上传事件:', pictureId, pictureData)
+  
+  // 刷新数据以显示新上传的图片（如果用户收藏了的话）
+  loadData()
+  console.log('CollectedPicturesPage 已刷新数据')
 }
 
 onMounted(() => {
   loadData()
   loadUserStats()
+  getCategoryOptions()
+  
+  // 监听图片上传事件
+  onPictureUploaded(handlePictureUploaded)
 })
 </script>
 
@@ -752,6 +790,14 @@ onMounted(() => {
   align-items: center;
   gap: 8px;
   min-width: 150px;
+}
+
+.sort-item {
+  margin-left: 40px;
+}
+
+.sort-order-item {
+  margin-left: 50px;
 }
 
 .search-actions {

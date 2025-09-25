@@ -1,5 +1,6 @@
 <template>
-  <div v-show="dataList.length > 0" ref="grid" class="picture-list-masonry" data-picture-list>
+  <!-- 瀑布流布局 -->
+  <div v-if="displayMode === 'masonry'" v-show="dataList.length > 0" ref="grid" class="picture-list-masonry" data-picture-list>
     <!-- Sizer element for column width -->
     <div class="grid-sizer"></div>
     <div v-for="picture in dataList" :key="picture.id" class="grid-item">
@@ -7,7 +8,7 @@
         <template #cover>
           <img
             :alt="picture.name"
-            :src="picture.thumbnailUrl ?? picture.url"
+            :src="getDisplayImageUrl(picture)"
             class="picture-image"
             @contextmenu.prevent
             @dragstart.prevent
@@ -117,6 +118,75 @@
           <a-card-meta :title="picture.name || '未命名'" />
         </template>
 
+        <!-- 操作按钮（仅在showOp为true时显示） -->
+        <template v-if="showOp" #actions>
+          <ShareAltOutlined @click="(e) => handleShare(picture, e)" />
+          <SearchOutlined @click="(e) => doSearch(picture, e)" />
+          <EditOutlined v-if="canEdit" @click="(e) => doEdit(picture, e)" />
+          <DeleteOutlined v-if="canDelete" @click="(e) => doDelete(picture, e)" />
+        </template>
+      </a-card>
+    </div>
+  </div>
+
+  <!-- 网格布局 -->
+  <div v-else-if="displayMode === 'grid'" v-show="dataList.length > 0" class="picture-list-grid" data-picture-list>
+    <div v-for="picture in dataList" :key="picture.id" class="grid-card">
+      <a-card hoverable class="picture-card" :data-picture-id="picture.id" @click="doClickPicture(picture)">
+        <template #cover>
+          <div class="image-container">
+            <img
+              :alt="picture.name"
+              :src="getDisplayImageUrl(picture)"
+              class="picture-image-grid"
+              @contextmenu.prevent
+              @dragstart.prevent
+              @selectstart.prevent
+            />
+          </div>
+        </template>
+        
+        <!-- 图片信息 -->
+        <div class="picture-info">
+          <div class="picture-title-grid">
+            <h4 class="title-text-grid">{{ picture.name || '未命名' }}</h4>
+          </div>
+          
+          <!-- 统计信息 -->
+          <div class="stats-info-grid">
+            <div class="stats-container-grid">
+              <!-- 浏览量 -->
+              <div class="stat-item-grid">
+                <EyeOutlined class="stat-icon-grid" />
+                <span class="stat-text-grid">{{ picture.viewCount || 0 }}</span>
+              </div>
+              <!-- 点赞数 -->
+              <div class="stat-item-grid clickable" @click="handleLike(picture, $event)">
+                <HeartFilled 
+                  v-if="picture.id && ((picture as any).liked || userActionStatus[picture.id]?.liked)"
+                  class="stat-icon-grid liked-icon"
+                />
+                <HeartOutlined 
+                  v-else
+                  class="stat-icon-grid"
+                />
+                <span class="stat-text-grid">{{ picture.likeCount || 0 }}</span>
+              </div>
+              <!-- 收藏数 -->
+              <div class="stat-item-grid clickable" @click="handleCollect(picture, $event)">
+                <StarFilled 
+                  v-if="picture.id && ((picture as any).collected || userActionStatus[picture.id]?.collected)"
+                  class="stat-icon-grid collected-icon"
+                />
+                <StarOutlined 
+                  v-else
+                  class="stat-icon-grid"
+                />
+                <span class="stat-text-grid">{{ picture.collectCount || 0 }}</span>
+              </div>
+            </div>
+          </div>
+        </div>
 
         <!-- 操作按钮（仅在showOp为true时显示） -->
         <template v-if="showOp" #actions>
@@ -128,6 +198,7 @@
       </a-card>
     </div>
   </div>
+
   <a-empty v-if="dataList.length === 0 && !loading" description="暂无图片，快去上传吧" />
   <ShareModal ref="shareModalRef" title="分享图片" :link="shareLink || ''" />
 </template>
@@ -161,6 +232,7 @@ import {
 import { message } from 'ant-design-vue'
 import ShareModal from '@/components/ShareModal.vue'
 import { useLoginUserStore } from '@/stores/useLoginUserStore.ts'
+import { onPictureLiked, onPictureCollected, onPictureUpdated } from '@/utils/crossPageCommunication'
 // 操作状态管理 - 增强防连点机制
 const operationTimers = ref<Record<string, number>>({})
 
@@ -231,6 +303,7 @@ interface Props {
   canDelete?: boolean
   onReload?: () => void
   layoutMode?: 'simple' | 'detailed'
+  displayMode?: 'masonry' | 'grid'
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -240,6 +313,7 @@ const props = withDefaults(defineProps<Props>(), {
   canEdit: false,
   canDelete: false,
   layoutMode: 'simple',
+  displayMode: 'masonry',
 })
 
 // --- Emits ---
@@ -252,7 +326,7 @@ const grid = ref<HTMLElement | null>(null)
 let msnry: Masonry | null = null
 
 const initMasonry = () => {
-  if (!grid.value) return
+  if (!grid.value || props.displayMode !== 'masonry') return
   msnry = new Masonry(grid.value, {
     itemSelector: '.grid-item',
     columnWidth: '.grid-sizer',
@@ -280,13 +354,16 @@ const layout = () => {
 
 onMounted(() => {
   nextTick(() => {
-    initMasonry()
-    // 确保在组件挂载后重新布局
-    setTimeout(() => {
-      if (msnry) {
-        msnry.layout?.()
-      }
-    }, 100)
+    // 只在瀑布流模式下初始化Masonry
+    if (props.displayMode === 'masonry') {
+      initMasonry()
+      // 确保在组件挂载后重新布局
+      setTimeout(() => {
+        if (msnry) {
+          msnry.layout?.()
+        }
+      }, 100)
+    }
     
     // 组件挂载时加载用户行为状态
     if (props.layoutMode === 'detailed' && props.dataList.length > 0) {
@@ -297,6 +374,9 @@ onMounted(() => {
       }, 200)
     }
   })
+  
+  // 监听跨页面通信事件
+  setupCrossPageListeners()
 })
 
 onBeforeUnmount(() => {
@@ -320,12 +400,15 @@ watch(
   () => props.dataList,
   () => {
     nextTick(() => {
-      if (!msnry) {
-        initMasonry()
-      } else {
-        // 重新加载项目并重新布局
-        msnry.reloadItems?.()
-        layout()
+      // 只在瀑布流模式下处理Masonry布局
+      if (props.displayMode === 'masonry') {
+        if (!msnry) {
+          initMasonry()
+        } else {
+          // 重新加载项目并重新布局
+          msnry.reloadItems?.()
+          layout()
+        }
       }
     })
   },
@@ -395,6 +478,12 @@ const handleAuthorClick = (user: API.UserVO | undefined, e: Event) => {
   if (user?.id) {
     router.push(`/user/${user.id}`)
   }
+}
+
+// --- 图片显示逻辑 ---
+const getDisplayImageUrl = (picture: API.PictureVO) => {
+  // 主页显示策略：优先缩略图，其次原图
+  return picture.thumbnailUrl || picture.url
 }
 
 // --- 用户行为状态管理 - 企业级隔离方案 ---
@@ -689,10 +778,85 @@ watch(
   { deep: true }
 )
 
+// --- 跨页面通信监听 ---
+const setupCrossPageListeners = () => {
+  // 监听点赞状态变化
+  onPictureLiked((event) => {
+    const { pictureId, data } = event
+    if (data?.liked !== undefined) {
+      updatePictureFromOtherPage(pictureId, { liked: data.liked })
+    }
+  })
+  
+  // 监听收藏状态变化
+  onPictureCollected((event) => {
+    const { pictureId, data } = event
+    if (data?.collected !== undefined) {
+      updatePictureFromOtherPage(pictureId, { collected: data.collected })
+    }
+  })
+  
+  // 监听图片更新事件
+  onPictureUpdated((event) => {
+    const { pictureId, data } = event
+    if (data) {
+      updatePictureFromOtherPage(pictureId, data)
+    }
+  })
+}
+
+// 从其他页面更新图片数据
+const updatePictureFromOtherPage = (pictureId: number, updates: any) => {
+  // 更新图片列表中的数据
+  const picture = props.dataList.find(p => p.id === pictureId)
+  if (picture) {
+    if (updates.liked !== undefined) {
+      (picture as any).liked = updates.liked
+    }
+    if (updates.collected !== undefined) {
+      (picture as any).collected = updates.collected
+    }
+    if (updates.likeCount !== undefined) {
+      picture.likeCount = updates.likeCount
+    }
+    if (updates.collectCount !== undefined) {
+      picture.collectCount = updates.collectCount
+    }
+    if (updates.shareCount !== undefined) {
+      picture.shareCount = updates.shareCount
+    }
+    
+    // 更新用户行为状态
+    if (updates.liked !== undefined || updates.collected !== undefined) {
+      updatePictureState(pictureId, {
+        liked: updates.liked,
+        collected: updates.collected
+      })
+    }
+    
+    console.log(`已从其他页面同步图片 ${pictureId} 的数据:`, updates)
+  }
+}
+
 // --- 用户行为处理方法 ---
 const handleLike = async (picture: API.PictureVO, e: Event) => {
   e.stopPropagation()
   if (!picture.id) return
+  
+  // 检查用户是否已登录
+  const currentUser = loginUserStore.loginUser
+  if (!currentUser?.id) {
+    // 显示大的登录提示
+    message.warning({
+      content: '请先登录后再点赞',
+      duration: 3,
+      style: {
+        fontSize: '16px',
+        fontWeight: 'bold'
+      }
+    })
+    return
+  }
   
   // 检查操作是否正在进行 - 增强防连点检查
   if (isOperationInProgress(picture.id, 'like')) {
@@ -758,6 +922,14 @@ const handleLike = async (picture: API.PictureVO, e: Event) => {
         // 3. 强制重新渲染组件
         forceRerender()
         await nextTick()
+        
+        // 4. 通知其他页面更新点赞状态
+        const { notifyPictureLiked, notifyPictureUpdated } = await import('@/utils/crossPageCommunication')
+        notifyPictureLiked(picture.id, responseData.liked)
+        notifyPictureUpdated(picture.id, {
+          liked: responseData.liked,
+          likeCount: responseData.likeCount
+        })
       }
       
       if (responseData?.likeCount !== undefined) {
@@ -803,6 +975,21 @@ const handleLike = async (picture: API.PictureVO, e: Event) => {
 const handleCollect = async (picture: API.PictureVO, e: Event) => {
   e.stopPropagation()
   if (!picture.id) return
+  
+  // 检查用户是否已登录
+  const currentUser = loginUserStore.loginUser
+  if (!currentUser?.id) {
+    // 显示大的登录提示
+    message.warning({
+      content: '请先登录后再收藏',
+      duration: 3,
+      style: {
+        fontSize: '16px',
+        fontWeight: 'bold'
+      }
+    })
+    return
+  }
   
   // 检查操作是否正在进行 - 增强防连点检查
   if (isOperationInProgress(picture.id, 'collect')) {
@@ -870,6 +1057,14 @@ const handleCollect = async (picture: API.PictureVO, e: Event) => {
         // 3. 强制重新渲染组件
         forceRerender()
         await nextTick()
+        
+        // 4. 通知其他页面更新收藏状态
+        const { notifyPictureCollected, notifyPictureUpdated } = await import('@/utils/crossPageCommunication')
+        notifyPictureCollected(picture.id, responseData.collected)
+        notifyPictureUpdated(picture.id, {
+          collected: responseData.collected,
+          collectCount: responseData.collectCount
+        })
       }
       
       if (responseData?.collectCount !== undefined) {
@@ -919,7 +1114,15 @@ const handleShare = async (picture: API.PictureVO, e: Event) => {
   // 检查用户是否已登录
   const currentUser = loginUserStore.loginUser
   if (!currentUser?.id) {
-    message.warning('请先登录后再分享')
+    // 显示大的登录提示
+    message.warning({
+      content: '请先登录后再分享',
+      duration: 3,
+      style: {
+        fontSize: '16px',
+        fontWeight: 'bold'
+      }
+    })
     return
   }
   
@@ -929,19 +1132,18 @@ const handleShare = async (picture: API.PictureVO, e: Event) => {
     
     // 先调用分享计数接口
     const shareRes = await addPictureShareUsingPost(picture.id)
-    console.log('分享计数API响应:', shareRes)
     
     if (shareRes.data.code === 0) {
       // 分享计数成功，再生成分享链接
       const linkRes = await generatePictureShareLinkUsingGet(picture.id)
       
-      console.log('分享链接API响应:', linkRes)
-      console.log('响应数据:', linkRes.data)
-      
       if (linkRes.data.code === 0) {
-        // 分享链接在message字段中，而不是data字段
+        // 分享链接在message字段中
         const shareLinkFromServer = linkRes.data.message
-        console.log('分享链接:', shareLinkFromServer)
+        
+        // 调试日志
+        console.log('分享链接API响应:', linkRes.data)
+        console.log('分享链接值:', shareLinkFromServer)
         
         // 设置分享链接并打开模态框
         shareLink.value = shareLinkFromServer
@@ -955,6 +1157,12 @@ const handleShare = async (picture: API.PictureVO, e: Event) => {
         // 更新图片的分享计数显示
         if (shareRes.data.data && shareRes.data.data.shareCount !== undefined) {
           await updatePictureState(picture.id, { shareCount: shareRes.data.data.shareCount })
+          
+          // 通知其他页面更新分享计数
+          const { notifyPictureUpdated } = await import('@/utils/crossPageCommunication')
+          notifyPictureUpdated(picture.id, {
+            shareCount: shareRes.data.data.shareCount
+          })
         }
       } else {
         message.destroy() // 清除加载消息
@@ -1595,11 +1803,125 @@ const getShareCountDisplay = (picture: API.PictureVO) => {
 }
 
 
+/* 网格布局样式 */
+.picture-list-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 20px;
+  width: 100%;
+  min-height: 200px;
+}
+
+.grid-card {
+  width: 100%;
+}
+
+.picture-card {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.image-container {
+  width: 100%;
+  height: 200px;
+  overflow: hidden;
+  position: relative;
+}
+
+.picture-image-grid {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  user-select: none;
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  -webkit-user-drag: none;
+  -khtml-user-drag: none;
+  -moz-user-drag: none;
+  -o-user-drag: none;
+  user-drag: none;
+  pointer-events: none;
+}
+
+.picture-info {
+  padding: 12px 16px;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.picture-title-grid {
+  margin-bottom: 8px;
+}
+
+.title-text-grid {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #262626;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.stats-info-grid {
+  margin-top: auto;
+}
+
+.stats-container-grid {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.stat-item-grid {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  transition: all 0.2s ease;
+}
+
+.stat-item-grid.clickable {
+  cursor: pointer;
+}
+
+.stat-item-grid.clickable:hover {
+  background-color: #f5f5f5;
+}
+
+.stat-icon-grid {
+  font-size: 12px;
+  color: #8c8c8c;
+  transition: color 0.2s ease;
+}
+
+.stat-icon-grid.liked-icon {
+  color: #ff6b6b !important;
+}
+
+.stat-icon-grid.collected-icon {
+  color: #ffd700 !important;
+}
+
+.stat-text-grid {
+  font-size: 12px;
+  color: #8c8c8c;
+  font-weight: 500;
+}
+
 /* Responsive column widths */
 @media (max-width: 1600px) {
   .grid-sizer,
   .grid-item {
     width: calc(100% / 5 - 20px);
+  }
+  .picture-list-grid {
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
   }
 }
 @media (max-width: 1200px) {
@@ -1607,11 +1929,17 @@ const getShareCountDisplay = (picture: API.PictureVO) => {
   .grid-item {
     width: calc(100% / 4 - 20px);
   }
+  .picture-list-grid {
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  }
 }
 @media (max-width: 992px) {
   .grid-sizer,
   .grid-item {
     width: calc(100% / 3 - 20px);
+  }
+  .picture-list-grid {
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
   }
 }
 @media (max-width: 768px) {
@@ -1619,11 +1947,17 @@ const getShareCountDisplay = (picture: API.PictureVO) => {
   .grid-item {
     width: calc(100% / 2 - 20px);
   }
+  .picture-list-grid {
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  }
 }
 @media (max-width: 576px) {
   .grid-sizer,
   .grid-item {
     width: 100%;
+  }
+  .picture-list-grid {
+    grid-template-columns: 1fr;
   }
 }
 </style>

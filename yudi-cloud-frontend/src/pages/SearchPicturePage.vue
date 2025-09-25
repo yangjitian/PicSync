@@ -6,7 +6,7 @@
       <template #cover>
         <img
           :alt="picture.name"
-          :src="picture.thumbnailUrl ?? picture.url"
+          :src="getDisplayImageUrl(picture)"
           style="height: 180px; object-fit: cover"
         />
       </template>
@@ -53,6 +53,12 @@ const pictureId = computed(() => {
   return route.query?.pictureId
 })
 const picture = ref<API.PictureVO>({})
+
+// --- 图片显示逻辑 ---
+const getDisplayImageUrl = (picture: API.PictureVO) => {
+  // 搜索页显示策略：优先缩略图，其次WebP，最后原图
+  return picture.thumbnailUrl || picture.webpUrl || picture.url
+}
 
 // 获取图片详情
 const fetchPictureDetail = async () => {

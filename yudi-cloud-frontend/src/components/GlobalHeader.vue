@@ -83,14 +83,28 @@ import { userLogoutUsingPost } from '@/api/userController.ts'
 const loginUserStore = useLoginUserStore()
 
 // 主页菜单项
-const mainItems = computed(() => [
-  {
-    key: '/',
-    icon: () => h(HomeOutlined),
-    label: '主页',
-    title: '主页',
+const mainItems = computed(() => {
+  const items = [
+    {
+      key: '/',
+      icon: () => h(HomeOutlined),
+      label: '主页',
+      title: '主页',
+    }
+  ]
+  
+  // 只有非管理员用户才显示上传图片菜单（包括未登录用户）
+  if (loginUserStore.loginUser?.userRole !== 'admin') {
+    items.push({
+      key: '/add_picture',
+      icon: () => h(CameraOutlined),
+      label: '上传图片',
+      title: '上传图片',
+    })
   }
-])
+  
+  return items
+})
 
 // 管理菜单项 - 使用下拉菜单，响应式检查用户角色
 const adminItems = computed(() => {
@@ -138,6 +152,12 @@ router.afterEach((to, from, next) => {
 const doMenuClick = ({ key }: { key: string }) => {
   // 如果是管理菜单本身，不执行跳转
   if (key === 'admin') {
+    return
+  }
+  
+  // 如果是上传图片且用户未登录，跳转到登录页面
+  if (key === '/add_picture' && (!loginUserStore.loginUser || !loginUserStore.loginUser.id)) {
+    router.push('/user/login')
     return
   }
   

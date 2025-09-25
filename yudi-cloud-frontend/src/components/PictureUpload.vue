@@ -40,15 +40,20 @@ const handleUpload = async ({ file }: any) => {
     const params: API.PictureUploadRequest = props.picture ? { id: props.picture.id } : {}
     params.spaceId = props.spaceId;
     const res = await uploadPictureUsingPost(params, {}, file)
+    console.log('上传响应:', res) // 添加调试日志
+    console.log('响应数据:', res.data) // 添加更详细的调试日志
     if (res.data.code === 0 && res.data.data) {
       message.success('图片上传成功')
       // 将上传成功的图片信息传递给父组件
       props.onSuccess?.(res.data.data)
     } else {
-      message.error('图片上传失败，' + res.data.message)
+      console.error('上传失败，响应码:', res.data.code, '错误信息:', res.data.message)
+      message.error('图片上传失败，' + (res.data.message || '未知错误'))
     }
-  } catch (error) {
-    message.error('图片上传失败，' + error.message)
+  } catch (error: any) {
+    console.error('上传错误:', error) // 添加详细错误日志
+    console.error('错误详情:', error.response?.data) // 添加响应错误详情
+    message.error('图片上传失败，' + (error.message || error.toString()))
   }
   loading.value = false
 }

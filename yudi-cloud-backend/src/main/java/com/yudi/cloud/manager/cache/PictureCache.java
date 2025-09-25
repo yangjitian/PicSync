@@ -1,9 +1,12 @@
 package com.yudi.cloud.manager.cache;
 
+import cn.hutool.core.lang.TypeReference;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.yudi.cloud.model.vo.picture.PictureVO;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
+
+import java.lang.reflect.Type;
 
 @Component
 public class PictureCache extends CacheTemplate<Page<PictureVO>>{
@@ -12,8 +15,9 @@ public class PictureCache extends CacheTemplate<Page<PictureVO>>{
         super(stringRedisTemplate);
     }
 
+
     @Override
-    protected Class<Page<PictureVO>> getTargetType() {
-        return (Class<Page<PictureVO>>) (Class<?>) Page.class;
+    protected Type getTargetType() {
+        return new TypeReference<Page<PictureVO>>() {}.getType();
     }
 }

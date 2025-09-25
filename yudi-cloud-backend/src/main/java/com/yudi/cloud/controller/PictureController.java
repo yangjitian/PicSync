@@ -1,5 +1,6 @@
 package com.yudi.cloud.controller;
 
+import cn.hutool.core.collection.CollUtil;
 import cn.hutool.core.util.StrUtil;
 import cn.hutool.json.JSONUtil;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
@@ -19,6 +20,7 @@ import com.yudi.cloud.exception.ThrowUtils;
 import com.yudi.cloud.manager.auth.SpaceUserAuthManager;
 import com.yudi.cloud.manager.auth.annotation.SaSpaceCheckPermission;
 import com.yudi.cloud.manager.auth.model.SpaceUserPermissionConstant;
+import com.yudi.cloud.manager.recommend.RedisRankServiceImpl;
 import com.yudi.cloud.model.dto.picture.*;
 import com.yudi.cloud.model.entity.Picture;
 import com.yudi.cloud.model.entity.Space;
@@ -31,7 +33,6 @@ import com.yudi.cloud.service.SpaceService;
 import com.yudi.cloud.service.UserService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.BeanUtils;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -56,8 +57,12 @@ public class PictureController {
 
     @Resource
     private AliYunAiApi aliYunAiApi;
-    @Autowired
+
+    @Resource
     private SpaceUserAuthManager spaceUserAuthManager;
+
+    @Resource
+    private RedisRankServiceImpl redisRankServiceImpl;
 
     @PostMapping("/upload")
     @SaSpaceCheckPermission(value = SpaceUserPermissionConstant.PICTURE_UPLOAD)
@@ -111,18 +116,39 @@ public class PictureController {
         if (pictureUpdateDTO == null || pictureUpdateDTO.getId() <= 0) {
             throw new BusinessException(ErrorCode.PARAMETER_ERROR);
         }
-        // 将实体类和 DTO 进行转换
-        Picture picture = new Picture();
-        BeanUtils.copyProperties(pictureUpdateDTO, picture);
-        // 注意将 list 转为 string
-        picture.setTags(JSONUtil.toJsonStr(pictureUpdateDTO.getTags()));
-        // 数据校验
-        pictureService.validPicture(picture);
+        
         // 判断是否存在
         long id = pictureUpdateDTO.getId();
         Picture oldPicture = pictureService.getById(id);
         ThrowUtils.throwIf(oldPicture == null, ErrorCode.CANNOT_FOUND_DATA_ERROR);
+        
+        // 创建更新对象，只更新允许编辑的字段，保护作者信息
+        Picture picture = new Picture();
+        picture.setId(id);
+        
+        // 只复制允许编辑的字段，避免覆盖作者信息
+        if (StrUtil.isNotBlank(pictureUpdateDTO.getName())) {
+            picture.setName(pictureUpdateDTO.getName());
+        }
+        if (StrUtil.isNotBlank(pictureUpdateDTO.getIntroduction())) {
+            picture.setIntroduction(pictureUpdateDTO.getIntroduction());
+        }
+        if (StrUtil.isNotBlank(pictureUpdateDTO.getCategory())) {
+            picture.setCategory(pictureUpdateDTO.getCategory());
+        } else {
+            // 设置默认分类：如果分类为空，默认为"其他"
+            picture.setCategory("其他");
+        }
+        if (CollUtil.isNotEmpty(pictureUpdateDTO.getTags())) {
+            picture.setTags(JSONUtil.toJsonStr(pictureUpdateDTO.getTags()));
+        }
+        
+        // 数据校验
+        pictureService.validPicture(picture);
+        
+        // 补充审核参数
         pictureService.fillReviewParams(picture, userService.getLoginUser(request));
+        
         // 操作数据库
         boolean result = pictureService.updateById(picture);
         ThrowUtils.throwIf(!result, ErrorCode.OPERATION_ERROR);
@@ -132,7 +158,7 @@ public class PictureController {
 
     @GetMapping("/get")
     @AuthCheck(mustRole = UserConstant.ADMIN_ROLE)
-    public BaseResponse<Picture> getPictureById(long id, HttpServletRequest request) {
+    public BaseResponse<Picture> getPictureById(long id) {
         ThrowUtils.throwIf(id <= 0, ErrorCode.PARAMETER_ERROR);
         // 查询数据库
         Picture picture = pictureService.getById(id);
@@ -155,10 +181,30 @@ public class PictureController {
             space = spaceService.getById(spaceId);
             ThrowUtils.throwIf(space == null, ErrorCode.CANNOT_FOUND_DATA_ERROR,"空间不存在");
         }
-        List<String> permissionList = spaceUserAuthManager.getPermissionList(space, userService.getLoginUser(request));
+        List<String> permissionList = spaceUserAuthManager.getPermissionList(space, userService.getLoginUser(request), picture.getUserId());
         PictureVO pictureVO = pictureService.getPictureVO(picture, request);
         pictureVO.setPermissionList(permissionList);
         // 获取封装类
+        return Result.success(pictureVO);
+    }
+
+    /**
+     * 获取图片详情（支持未登录用户访问，仅显示图片和作者信息）
+     */
+    @GetMapping("/get/vo/public")
+    public BaseResponse<PictureVO> getPictureVOByIdPublic(long id, HttpServletRequest request) {
+        ThrowUtils.throwIf(id <= 0, ErrorCode.PARAMETER_ERROR);
+        // 查询数据库
+        Picture picture = pictureService.getById(id);
+        ThrowUtils.throwIf(picture == null, ErrorCode.CANNOT_FOUND_DATA_ERROR);
+        
+        // 只允许查看公共图库的图片（spaceId为null）
+        if (picture.getSpaceId() != null) {
+            throw new BusinessException(ErrorCode.NO_AUTH_ERROR, "只能查看公共图库的图片");
+        }
+        
+        // 获取封装类（未登录用户版本）
+        PictureVO pictureVO = pictureService.getPictureVOForPublic(picture, request);
         return Result.success(pictureVO);
     }
 
@@ -204,6 +250,67 @@ public class PictureController {
         return Result.success(result);
     }
 
+    /**
+     * 获取图片分页列表（公开访问，支持未登录用户）
+     * 仅显示公共图库的图片，不显示用户操作状态
+     */
+    @PostMapping("/list/page/vo/public")
+    public BaseResponse<Page<PictureVO>> listPictureVOByPagePublic(@RequestBody PictureQueryDTO pictureQueryDTO,
+                                                                   HttpServletRequest request) {
+        long current = pictureQueryDTO.getCurrent();
+        long size = pictureQueryDTO.getPageSize();
+        // 限制爬虫
+        ThrowUtils.throwIf(size > 20, ErrorCode.PARAMETER_ERROR);
+        
+        // 强制设置为公共图库查询（spaceId为null）
+        pictureQueryDTO.setNullSpaceId(true);
+        pictureQueryDTO.setReviewStatus(PictureReviewStatusEnum.PASS.getValue());
+        
+        // 查询数据库
+        Page<Picture> picturePage = pictureService.page(new Page<>(current, size),
+                pictureService.getQueryWrapper(pictureQueryDTO));
+        
+        // 获取封装类（公开版本）
+        return Result.success(pictureService.getPictureVOPageForPublic(picturePage, request));
+    }
+
+    /**
+     * 获取主页推荐图片列表（基于推荐算法）
+     */
+    @PostMapping("/recommend/homepage")
+    public BaseResponse<Page<PictureVO>> getHomepageRecommendPictures(@RequestBody PictureQueryDTO pictureQueryDTO,
+                                                                      HttpServletRequest request) {
+        long current = pictureQueryDTO.getCurrent();
+        long size = pictureQueryDTO.getPageSize();
+        
+        // 参数校验
+        ThrowUtils.throwIf(current <= 0, ErrorCode.PARAMETER_ERROR);
+        ThrowUtils.throwIf(size <= 0 || size > 20, ErrorCode.PARAMETER_ERROR);
+
+        try {
+            // 使用推荐算法获取所有图片ID列表（用于瀑布流）
+            List<Long> allRecommendPictureIds = redisRankServiceImpl.getAllRecommendPictureIds();
+            
+            if (allRecommendPictureIds.isEmpty()) {
+                log.warn("推荐图片列表为空，返回空结果");
+                Page<PictureVO> emptyPage = new Page<>(current, size);
+                return Result.success(emptyPage);
+            }
+            
+            // 根据推荐ID列表获取图片详情，支持分类筛选
+            Page<PictureVO> result = pictureService.getPictureVOPageByIdsWithFilter(allRecommendPictureIds, pictureQueryDTO, current, size, request);
+            
+            log.info("主页推荐图片获取成功: 请求page={}, 返回{}张图片", current, result.getRecords().size());
+            return Result.success(result);
+            
+        } catch (Exception e) {
+            log.error("获取主页推荐图片失败: {}", e.getMessage(), e);
+            // 降级处理：返回普通分页查询
+            log.info("推荐算法降级，使用普通分页查询");
+            return listPictureVOByPage(pictureQueryDTO, request);
+        }
+    }
+
     @PostMapping("/edit")
     @SaSpaceCheckPermission(value = SpaceUserPermissionConstant.PICTURE_EDIT)
     public BaseResponse<Boolean> editPicture(@RequestBody PictureEditDTO pictureEditDTO, HttpServletRequest request) {
@@ -218,7 +325,7 @@ public class PictureController {
     @GetMapping("/tag_category")
     public BaseResponse<PictureTagCategoryVO> listPictureTagCategory() {
         PictureTagCategoryVO pictureTagCategoryVO = new PictureTagCategoryVO();
-        List<String> category = Arrays.asList("风景", "人物", "动物", "建筑", "美食","艺术","其他");
+        List<String> category = Arrays.asList( "人物","动漫","风景","动物","二次元","建筑","美食","艺术","其他");
         pictureTagCategoryVO.setCategoryList(category);
         return Result.success(pictureTagCategoryVO);
     }

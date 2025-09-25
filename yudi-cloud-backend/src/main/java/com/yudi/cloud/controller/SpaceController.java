@@ -17,6 +17,7 @@ import com.yudi.cloud.model.entity.Space;
 import com.yudi.cloud.model.entity.User;
 import com.yudi.cloud.model.enums.SpaceLevelEnum;
 import com.yudi.cloud.model.vo.space.SpaceVO;
+import com.yudi.cloud.utils.TimeUtils;
 import com.yudi.cloud.service.PictureService;
 import com.yudi.cloud.service.SpaceService;
 import com.yudi.cloud.service.UserService;
@@ -54,7 +55,8 @@ public class SpaceController {
 
     @Resource
     private PictureService pictureService;
-    @Autowired
+
+    @Resource
     private SpaceUserAuthManager spaceUserAuthManager;
 
     @PostMapping("/add")
@@ -75,8 +77,15 @@ public class SpaceController {
             for (Picture picture : pictures) {
                 pictureService.clearPictureFiles(picture);
             }
-            // 3. 删除图片记录
+            // 3. 先清空url和webpUrl字段，然后删除图片记录
             List<Long> pictureIds = pictures.stream().map(Picture::getId).collect(Collectors.toList());
+            // 批量清空url和webpUrl字段
+            pictureService.lambdaUpdate()
+                    .in(Picture::getId, pictureIds)
+                    .set(Picture::getUrl, null)
+                    .set(Picture::getWebpUrl, null)
+                    .update();
+            // 执行逻辑删除
             pictureService.removeByIds(pictureIds);
         }
         boolean result = spaceService.removeById(space.getId());
@@ -91,7 +100,7 @@ public class SpaceController {
         }
         Space space = spaceService.validateSpaceAccess(spaceEditDTO.getId(), request);
         space.setSpaceName(spaceEditDTO.getSpaceName());
-        space.setEditTime(new Date());
+        space.setEditTime(TimeUtils.getCurrentBeijingTime());
         spaceService.validSpace(space, false);
         boolean result = spaceService.updateById(space);
         ThrowUtils.throwIf(!result, ErrorCode.OPERATION_ERROR);
@@ -100,8 +109,7 @@ public class SpaceController {
 
     @PostMapping("/update")
     @AuthCheck(mustRole = UserConstant.ADMIN_ROLE)
-    public BaseResponse<Boolean> updateSpace(@RequestBody SpaceUpdateDTO spaceUpdateDTO,
-                                             HttpServletRequest request) {
+    public BaseResponse<Boolean> updateSpace(@RequestBody SpaceUpdateDTO spaceUpdateDTO) {
         if (spaceUpdateDTO == null || spaceUpdateDTO.getId() == null || spaceUpdateDTO.getId() <= 0) {
             throw new BusinessException(ErrorCode.PARAMETER_ERROR);
         }
@@ -109,7 +117,7 @@ public class SpaceController {
         Space spaceToUpdate = spaceService.getById(spaceId);
         ThrowUtils.throwIf(spaceToUpdate == null, ErrorCode.CANNOT_FOUND_DATA_ERROR);
         BeanUtils.copyProperties(spaceUpdateDTO, spaceToUpdate);
-        spaceToUpdate.setEditTime(new Date());
+        spaceToUpdate.setEditTime(TimeUtils.getCurrentBeijingTime());
         spaceService.fillSpaceBySpaceLevel(spaceToUpdate);
         spaceService.validSpace(spaceToUpdate, false);
         boolean result = spaceService.updateById(spaceToUpdate);

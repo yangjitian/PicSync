@@ -8,7 +8,8 @@ public enum PictureReviewStatusEnum {
 
     REVIEWING("待审核", 0),
     PASS("通过", 1),
-    REJECT("拒绝", 2);
+    REJECT("拒绝", 2),
+    PENDING("待定",3);
 
     private final String text;
 
