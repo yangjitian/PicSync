@@ -11,6 +11,62 @@
     </a-flex>
     <div style="margin-bottom: 16px" />
     
+    <!-- 统计卡片 -->
+    <a-row :gutter="16" style="margin-bottom: 24px">
+      <a-col :span="6">
+        <a-card size="small" :loading="statsLoading">
+          <a-statistic
+            title="总发布数"
+            :value="statsData.totalPictures || 0"
+            :value-style="{ color: '#1890ff' }"
+          >
+            <template #prefix>
+              <PictureOutlined />
+            </template>
+          </a-statistic>
+        </a-card>
+      </a-col>
+      <a-col :span="6">
+        <a-card size="small" :loading="statsLoading">
+          <a-statistic
+            title="总点赞数"
+            :value="statsData.totalLikes || 0"
+            :value-style="{ color: '#f5222d' }"
+          >
+            <template #prefix>
+              <LikeOutlined />
+            </template>
+          </a-statistic>
+        </a-card>
+      </a-col>
+      <a-col :span="6">
+        <a-card size="small" :loading="statsLoading">
+          <a-statistic
+            title="总收藏数"
+            :value="statsData.totalCollects || 0"
+            :value-style="{ color: '#52c41a' }"
+          >
+            <template #prefix>
+              <StarOutlined />
+            </template>
+          </a-statistic>
+        </a-card>
+      </a-col>
+      <a-col :span="6">
+        <a-card size="small" :loading="statsLoading">
+          <a-statistic
+            title="总浏览量"
+            :value="statsData.totalViews || 0"
+            :value-style="{ color: '#722ed1' }"
+          >
+            <template #prefix>
+              <EyeOutlined />
+            </template>
+          </a-statistic>
+        </a-card>
+      </a-col>
+    </a-row>
+    
     <!-- 搜索表单 -->
     <a-form layout="inline" :model="searchParams" @finish="doSearch">
       <a-form-item label="关键词" name="searchText">
@@ -92,13 +148,15 @@ import { useRoute, useRouter } from 'vue-router'
 import { useLoginUserStore } from '@/stores/useLoginUserStore.ts'
 import { 
   listPublishedPictureVoByPageUsingPost,
-  listPictureTagCategoryUsingGet
+  listPictureTagCategoryUsingGet,
+  getPublishedPictureStatsUsingGet
 } from '@/api/pictureController.ts'
 import { 
   PIC_REVIEW_STATUS_OPTIONS
 } from '@/constants/picture.ts'
 import PictureList from '@/components/PictureList.vue'
 import { onPictureUploaded } from '@/utils/crossPageCommunication'
+import { PictureOutlined, LikeOutlined, StarOutlined, EyeOutlined } from '@ant-design/icons-vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -113,6 +171,16 @@ const componentKey = computed(() => {
 const dataList = ref<API.PictureVO[]>([])
 const total = ref(0)
 const loading = ref(false)
+
+// 统计数据
+const statsData = ref<API.PictureStatsDTO>({
+  totalPictures: 0,
+  totalLikes: 0,
+  totalCollects: 0,
+  totalViews: 0,
+  totalDownloads: 0
+})
+const statsLoading = ref(false)
 
 // 搜索条件
 const searchParams = reactive<API.PictureQueryRequest>({
@@ -175,6 +243,25 @@ const goToAddPicture = () => {
 }
 
 /**
+ * 获取统计数据
+ */
+const fetchStatsData = async () => {
+  statsLoading.value = true
+  try {
+    const res = await getPublishedPictureStatsUsingGet()
+    if (res.data.code === 0 && res.data.data) {
+      statsData.value = res.data.data
+    } else {
+      message.error('获取统计数据失败，' + res.data.message)
+    }
+  } catch (error: any) {
+    message.error('获取统计数据失败，' + error.message)
+  } finally {
+    statsLoading.value = false
+  }
+}
+
+/**
  * 获取标签和分类选项
  */
 const getTagCategoryOptions = async () => {
@@ -216,6 +303,7 @@ onMounted(() => {
     nextTick(() => {
       getTagCategoryOptions()
       fetchData()
+      fetchStatsData()
       // 发送页面刷新事件
       sendPageRefreshEvent()
     })
@@ -231,6 +319,7 @@ watch(() => route.path, (newPath, oldPath) => {
     // 使用 nextTick 确保路由已经更新
     nextTick(() => {
       fetchData()
+      fetchStatsData()
     })
   }
 })
@@ -244,6 +333,7 @@ watch(
       nextTick(() => {
         if (checkLogin()) {
           fetchData()
+          fetchStatsData()
         }
       })
     }
@@ -259,6 +349,7 @@ router.afterEach((to, from) => {
     nextTick(() => {
       if (checkLogin()) {
         fetchData()
+        fetchStatsData()
       }
     })
   }
@@ -270,6 +361,7 @@ onActivated(() => {
   nextTick(() => {
     if (checkLogin()) {
       fetchData()
+      fetchStatsData()
     }
   })
 })
@@ -278,6 +370,7 @@ onActivated(() => {
 const forceRefresh = () => {
   if (checkLogin()) {
     fetchData()
+    fetchStatsData()
   }
 }
 
@@ -301,6 +394,7 @@ const handlePictureUploaded = (event: any) => {
   if (checkLogin()) {
     nextTick(() => {
       fetchData()
+      fetchStatsData()
       console.log('PublishedListPage 已刷新数据')
     })
   }

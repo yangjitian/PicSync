@@ -207,4 +207,12 @@ public interface PictureService extends IService<Picture> {
      * @return 包装后的分页对象
      */
     Page<PictureVO> getPictureVOPageForPublic(Page<Picture> picturePage, HttpServletRequest request);
+
+    /**
+     * 获取用户发布图片的统计数据
+     *
+     * @param userId 用户ID
+     * @return 统计数据
+     */
+    PictureStatsDTO getPublishedPictureStats(Long userId);
 }

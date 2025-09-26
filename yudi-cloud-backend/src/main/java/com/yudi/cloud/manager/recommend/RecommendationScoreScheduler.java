@@ -15,6 +15,8 @@ import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
 import com.yudi.cloud.utils.TimeUtils;
 
 /**
@@ -185,6 +187,54 @@ public class RecommendationScoreScheduler {
     public void dailyFullUpdate() {
         log.info("开始执行每日全量推荐分数更新");
         fullUpdateRecommendScores();
+    }
+
+    /**
+     * 清理已删除图片的推荐分数
+     * 定期清理Redis缓存中的已删除图片，保持缓存一致性
+     */
+    @Scheduled(cron = "0 0 3 * * ?") // 每天凌晨3点执行
+    public void cleanupDeletedPictures() {
+        log.info("开始清理已删除图片的推荐分数");
+        
+        try {
+            // 1. 获取Redis中所有图片ID
+            Set<Object> redisPictureIds = redisRankServiceImpl.getAllPictureIdsFromRedis();
+            if (redisPictureIds == null || redisPictureIds.isEmpty()) {
+                log.info("Redis中没有图片推荐分数，跳过清理");
+                return;
+            }
+
+            // 2. 查询数据库中未删除的图片ID
+            QueryWrapper<Picture> wrapper = new QueryWrapper<>();
+            wrapper.select("id")
+                   .eq("isDelete", 0)
+                   .eq("reviewStatus", 1);
+            
+            List<Picture> validPictures = pictureMapper.selectList(wrapper);
+            Set<Long> validPictureIds = validPictures.stream()
+                    .map(Picture::getId)
+                    .collect(Collectors.toSet());
+
+            // 3. 找出需要清理的图片ID（在Redis中但不在数据库中的）
+            List<Long> toRemoveIds = redisPictureIds.stream()
+                    .map(id -> (Long) id)
+                    .filter(id -> !validPictureIds.contains(id))
+                    .collect(Collectors.toList());
+
+            // 4. 批量清理
+            if (!toRemoveIds.isEmpty()) {
+                for (Long pictureId : toRemoveIds) {
+                    redisRankServiceImpl.removePictureFromRank(pictureId);
+                }
+                log.info("清理完成: 从Redis中移除了{}张已删除图片的推荐分数", toRemoveIds.size());
+            } else {
+                log.info("清理完成: 没有发现需要清理的已删除图片");
+            }
+
+        } catch (Exception e) {
+            log.error("清理已删除图片推荐分数失败: {}", e.getMessage(), e);
+        }
     }
     // 初始化计算图片推荐分
 //    @PostConstruct

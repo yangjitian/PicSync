@@ -32,7 +32,7 @@
       </a-col>
       <!-- 空间使用排行分析 -->
       <a-col :xs="24" :md="12">
-        <SpaceRankAnalyze v-if="isAdmin" :spaceId="spaceId" :queryAll="queryAll" :queryPublic="queryPublic" />
+        <SpaceRankAnalyze v-if="isAdmin" :queryAll="queryAll" :queryPublic="queryPublic" />
       </a-col>
     </a-row>
   </div>
@@ -55,7 +55,7 @@ const router = useRouter()
 // 空间 id
 const spaceId = computed(() => {
   const id = route.query?.spaceId as string
-  return id ? Number(id) : undefined
+  return id || undefined
 })
 
 // 是否查询所有空间

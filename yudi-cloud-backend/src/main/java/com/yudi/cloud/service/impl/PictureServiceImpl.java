@@ -9,6 +9,7 @@ import cn.hutool.json.JSONUtil;
 
 import java.util.ArrayList;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
@@ -30,6 +31,7 @@ import com.yudi.cloud.manager.upload.UrlPictureUpload;
 import com.yudi.cloud.mapper.PictureMapper;
 import com.yudi.cloud.mapper.UserPictureActionMapper;
 import com.yudi.cloud.model.dto.picture.*;
+import com.yudi.cloud.model.dto.picture.PictureStatsDTO;
 import com.yudi.cloud.model.entity.Picture;
 import com.yudi.cloud.model.entity.Space;
 import com.yudi.cloud.model.entity.User;
@@ -41,6 +43,7 @@ import java.util.Map;
 
 import com.yudi.cloud.model.enums.PictureReviewStatusEnum;
 import com.yudi.cloud.model.enums.SpaceTypeEnum;
+import com.yudi.cloud.model.enums.UserRoleEnum;
 import com.yudi.cloud.model.vo.picture.PictureVO;
 import com.yudi.cloud.model.vo.user.UserVO;
 import com.yudi.cloud.service.PictureService;
@@ -307,7 +310,8 @@ public class PictureServiceImpl extends ServiceImpl<PictureMapper, Picture>
                     .eq(Picture::getId, pictureId)
                     .set(Picture::getUrl, null)
                     .set(Picture::getWebpUrl, null)
-                    .set(Picture::getRecommendScore,null)
+                    .set(Picture::getRecommendScore, null)
+                    .set(Picture::getScoreUpdatedAt, TimeUtils.getCurrentBeijingTime())
                     .update();
             ThrowUtils.throwIf(!updateResult, ErrorCode.OPERATION_ERROR, "清空URL字段失败");
             
@@ -1066,6 +1070,10 @@ public class PictureServiceImpl extends ServiceImpl<PictureMapper, Picture>
         Long pictureId = createPictureOutPaintingTaskRequest.getPictureId();
         Picture picture = Optional.ofNullable(this.getById(pictureId))
                 .orElseThrow(() -> new BusinessException(ErrorCode.CANNOT_FOUND_DATA_ERROR));
+        
+        // VIP权限校验 - 只有VIP用户和管理员可以使用AI扩图功能
+        checkVipPermissionForAiOutpainting(loginUser);
+        
         // 权限校验
 //        checkPictureAuth(loginUser, picture);
 
@@ -1875,6 +1883,84 @@ public class PictureServiceImpl extends ServiceImpl<PictureMapper, Picture>
         } catch (Exception e) {
             log.error("清理图片{}缓存失败: {}", pictureId, e.getMessage(), e);
         }
+    }
+
+    /**
+     * 检查用户是否有使用AI扩图功能的权限
+     * 只有VIP用户和管理员可以使用
+     */
+    private void checkVipPermissionForAiOutpainting(User loginUser) {
+        if (loginUser == null) {
+            throw new BusinessException(ErrorCode.NO_AUTH_ERROR, "用户未登录");
+        }
+        
+        // 管理员可以使用
+        if (UserRoleEnum.ADMIN.getValue().equals(loginUser.getUserRole())) {
+            return;
+        }
+        
+        // VIP用户可以使用
+        if (UserRoleEnum.VIP.getValue().equals(loginUser.getUserRole())) {
+            // 检查VIP是否过期
+            if (loginUser.getVipExpireTime() != null) {
+                try {
+                    if (loginUser.getVipExpireTime().after(new Date())) {
+                        return; // VIP未过期，可以使用
+                    }
+                } catch (Exception e) {
+                    log.error("检查VIP过期时间失败", e);
+                }
+            }
+            throw new BusinessException(ErrorCode.NO_AUTH_ERROR, "VIP已过期，无法使用AI扩图功能");
+        }
+        
+        // 普通用户无法使用
+        throw new BusinessException(ErrorCode.NO_AUTH_ERROR, "AI扩图功能仅限VIP用户使用，请升级会员");
+    }
+
+    /**
+     * 获取用户发布图片的统计数据
+     *
+     * @param userId 用户ID
+     * @return 统计数据
+     */
+    @Override
+    public PictureStatsDTO getPublishedPictureStats(Long userId) {
+        ThrowUtils.throwIf(userId == null || userId <= 0, ErrorCode.PARAMETER_ERROR);
+        
+        // 查询用户发布的所有图片（包括已删除的，用于统计）
+        LambdaQueryWrapper<Picture> queryWrapper = new LambdaQueryWrapper<>();
+        queryWrapper.eq(Picture::getUserId, userId)
+                   .isNull(Picture::getSpaceId); // 只统计公共图库的图片
+        
+        List<Picture> pictures = this.list(queryWrapper);
+        
+        if (CollUtil.isEmpty(pictures)) {
+            // 如果没有发布图片，返回空统计数据
+            PictureStatsDTO stats = new PictureStatsDTO();
+            stats.setTotalPictures(0L);
+            stats.setTotalLikes(0L);
+            stats.setTotalCollects(0L);
+            stats.setTotalViews(0L);
+            stats.setTotalDownloads(0L);
+            return stats;
+        }
+        
+        // 计算统计数据
+        long totalPictures = pictures.size();
+        long totalLikes = pictures.stream().mapToLong(p -> p.getLikeCount() != null ? p.getLikeCount() : 0L).sum();
+        long totalCollects = pictures.stream().mapToLong(p -> p.getCollectCount() != null ? p.getCollectCount() : 0L).sum();
+        long totalViews = pictures.stream().mapToLong(p -> p.getViewCount() != null ? p.getViewCount() : 0L).sum();
+        long totalDownloads = pictures.stream().mapToLong(p -> p.getDownloadCount() != null ? p.getDownloadCount() : 0L).sum();
+        
+        PictureStatsDTO stats = new PictureStatsDTO();
+        stats.setTotalPictures(totalPictures);
+        stats.setTotalLikes(totalLikes);
+        stats.setTotalCollects(totalCollects);
+        stats.setTotalViews(totalViews);
+        stats.setTotalDownloads(totalDownloads);
+        
+        return stats;
     }
 }
 

@@ -79,11 +79,13 @@ public class SpaceController {
             }
             // 3. 先清空url和webpUrl字段，然后删除图片记录
             List<Long> pictureIds = pictures.stream().map(Picture::getId).collect(Collectors.toList());
-            // 批量清空url和webpUrl字段
+            // 批量清空url和webpUrl字段，同时清空推荐分数
             pictureService.lambdaUpdate()
                     .in(Picture::getId, pictureIds)
                     .set(Picture::getUrl, null)
                     .set(Picture::getWebpUrl, null)
+                    .set(Picture::getRecommendScore, null)
+                    .set(Picture::getScoreUpdatedAt, TimeUtils.getCurrentBeijingTime())
                     .update();
             // 执行逻辑删除
             pictureService.removeByIds(pictureIds);

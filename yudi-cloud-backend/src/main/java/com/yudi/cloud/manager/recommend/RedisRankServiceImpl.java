@@ -279,4 +279,20 @@ public class RedisRankServiceImpl {
             log.error("从推荐排名中移除图片{}失败: {}", pictureId, e.getMessage(), e);
         }
     }
+
+    /**
+     * 获取Redis中所有图片ID
+     * 用于清理已删除图片的推荐分数
+     *
+     * @return Redis中所有图片ID的集合
+     */
+    public Set<Object> getAllPictureIdsFromRedis() {
+        try {
+            ZSetOperations<String, Object> zSet = redisTemplate.opsForZSet();
+            return zSet.range(RANK_KEY, 0, -1);
+        } catch (Exception e) {
+            log.error("获取Redis中所有图片ID失败: {}", e.getMessage(), e);
+            return Collections.emptySet();
+        }
+    }
 }

@@ -22,6 +22,7 @@ import com.yudi.cloud.manager.auth.annotation.SaSpaceCheckPermission;
 import com.yudi.cloud.manager.auth.model.SpaceUserPermissionConstant;
 import com.yudi.cloud.manager.recommend.RedisRankServiceImpl;
 import com.yudi.cloud.model.dto.picture.*;
+import com.yudi.cloud.model.dto.picture.PictureStatsDTO;
 import com.yudi.cloud.model.entity.Picture;
 import com.yudi.cloud.model.entity.Space;
 import com.yudi.cloud.model.entity.User;
@@ -447,6 +448,18 @@ public class PictureController {
                                                                    HttpServletRequest request) {
         Page<PictureVO> pictureVOPage = pictureService.listLikedPicturesByPage(pictureQueryDTO, request);
         return Result.success(pictureVOPage);
+    }
+
+    /**
+     * 获取用户发布图片的统计数据
+     */
+    @GetMapping("/stats/published")
+    public BaseResponse<PictureStatsDTO> getPublishedPictureStats(HttpServletRequest request) {
+        User loginUser = userService.getLoginUser(request);
+        ThrowUtils.throwIf(loginUser == null, ErrorCode.NOT_LOGIN_ERROR);
+        
+        PictureStatsDTO stats = pictureService.getPublishedPictureStats(loginUser.getId());
+        return Result.success(stats);
     }
 
     /**

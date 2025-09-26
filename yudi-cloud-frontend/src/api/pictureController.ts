@@ -551,3 +551,13 @@ export async function getUserStatsUsingGet(
     ...(options || {}),
   })
 }
+
+/** 获取用户发布图片统计数据 GET /api/picture/stats/published */
+export async function getPublishedPictureStatsUsingGet(
+  options?: { [key: string]: any }
+) {
+  return request<API.BaseResponsePictureStatsDTO_>('/api/picture/stats/published', {
+    method: 'GET',
+    ...(options || {}),
+  })
+}

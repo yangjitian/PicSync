@@ -16,7 +16,6 @@ import { message } from 'ant-design-vue'
 interface Props {
   queryAll?: boolean
   queryPublic?: boolean
-  spaceId?: number
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -36,7 +35,6 @@ const fetchData = async () => {
   const res = await getSpaceRankAnalyzeUsingPost({
     queryAll: props.queryAll,
     queryPublic: props.queryPublic,
-    spaceId: props.spaceId,
     topN: 10, // 后端默认是 10
   })
   if (res.data.code === 0 && res.data.data) {

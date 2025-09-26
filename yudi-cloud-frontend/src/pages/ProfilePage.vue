@@ -208,8 +208,8 @@
     <!-- 会员特权弹窗 -->
     <a-modal
       v-model:open="vipModalVisible"
-      title="会员特权"
-      :width="600"
+      :title="null"
+      :width="480"
       :footer="null"
       centered
     >
@@ -320,24 +320,16 @@ const exchangeForm = ref({
 // 会员特权列表
 const vipBenefits = ref([
   {
-    title: '无限存储空间',
-    description: '享受无限制的图片存储空间，不再受容量限制'
-  },
-  {
-    title: '高清图片上传',
-    description: '支持更高分辨率的图片上传和处理'
-  },
-  {
-    title: '批量操作功能',
-    description: '支持批量上传、下载、删除等高效操作'
+    title: '专业版扩容',
+    description: '升级至专业版存储空间，享受更大容量和更快的访问速度'
   },
   {
     title: '专属客服支持',
     description: '享受优先客服响应和专业技术支持'
   },
   {
-    title: '高级图片编辑',
-    description: '使用更多高级图片编辑工具和滤镜效果'
+    title: 'AI图片编辑功能',
+    description: '使用先进的AI技术进行智能图片编辑、修复和美化'
   },
   {
     title: '数据备份保障',
@@ -704,18 +696,20 @@ onMounted(() => {
 
 /* 会员特权弹窗样式 */
 .vip-modal-content {
-  padding: 0;
+  padding: 24px 0 0 0;
+  min-height: 400px;
 }
 
 .vip-benefits {
-  margin-bottom: 24px;
+  margin-bottom: 16px;
 }
 
 .vip-benefits h4 {
-  margin: 0 0 16px 0;
-  font-size: 16px;
+  margin: 0 0 24px 0;
+  font-size: 20px;
   font-weight: 600;
   color: #262626;
+  text-align: center;
 }
 
 .benefit-title {
@@ -730,13 +724,13 @@ onMounted(() => {
 
 .exchange-section {
   background: #fafafa;
-  padding: 20px;
+  padding: 16px;
   border-radius: 8px;
-  margin-top: 16px;
+  margin-top: 8px;
 }
 
 :deep(.ant-divider) {
-  margin: 16px 0;
+  margin: 12px 0;
   color: #8c8c8c;
 }
 

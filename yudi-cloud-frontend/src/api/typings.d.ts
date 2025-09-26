@@ -143,6 +143,12 @@ declare namespace API {
     message?: string
   }
 
+  type BaseResponsePictureStatsDTO_ = {
+    code?: number
+    data?: PictureStatsDTO
+    message?: string
+  }
+
   type BaseResponseSpace_ = {
     code?: number
     data?: Space
@@ -470,6 +476,14 @@ declare namespace API {
     collected?: boolean
   }
 
+  type PictureStatsDTO = {
+    totalPictures?: number
+    totalLikes?: number
+    totalCollects?: number
+    totalViews?: number
+    totalDownloads?: number
+  }
+
   type SearchPictureByColorRequest = {
     picColor?: string
     spaceId?: number
@@ -504,7 +518,7 @@ declare namespace API {
   type SpaceCategoryAnalyzeRequest = {
     queryAll?: boolean
     queryPublic?: boolean
-    spaceId?: number
+    spaceId?: string
   }
 
   type SpaceCategoryAnalyzeResponse = {
@@ -544,7 +558,7 @@ declare namespace API {
   type SpaceSizeAnalyzeRequest = {
     queryAll?: boolean
     queryPublic?: boolean
-    spaceId?: number
+    spaceId?: string
   }
 
   type SpaceSizeAnalyzeResponse = {
@@ -555,7 +569,7 @@ declare namespace API {
   type SpaceTagAnalyzeRequest = {
     queryAll?: boolean
     queryPublic?: boolean
-    spaceId?: number
+    spaceId?: string
   }
 
   type SpaceTagAnalyzeResponse = {
@@ -574,7 +588,7 @@ declare namespace API {
   type SpaceUsageAnalyzeRequest = {
     queryAll?: boolean
     queryPublic?: boolean
-    spaceId?: number
+    spaceId?: string
   }
 
   type SpaceUsageAnalyzeResponse = {
@@ -604,7 +618,7 @@ declare namespace API {
   type SpaceUserAnalyzeRequest = {
     queryAll?: boolean
     queryPublic?: boolean
-    spaceId?: number
+    spaceId?: string
     timeDimension?: string
     userId?: number
   }

@@ -1,16 +1,15 @@
 package com.yudi.cloud.manager.recommend;
 
 import com.yudi.cloud.model.entity.Picture;
+import com.yudi.cloud.utils.TimeUtils;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.util.Date;
-import com.yudi.cloud.utils.TimeUtils;
 
 /**
  * 图片推荐分数计算服务
- * 核心算法公式：
- * 最终分数 = (行为加权分 × 时间衰减因子 × 质量调节因子) + 冷启动加成
+ * - 核心算法：新图衰减+冷启动 / 老图无衰减+行为质量主导 / 小用户敏感变换 / 平滑防抖
  *
  * @author yudi
  * @since 1.0.0
@@ -19,176 +18,142 @@ import com.yudi.cloud.utils.TimeUtils;
 @Slf4j
 public class PictureRecommendationServiceImpl {
 
-    /**
-     * 时间衰减系数 λ = ln(2) / 48 ≈ 0.014426
-     * 表示每48小时分数衰减一半，用于实现内容的自然更替
-     * 衰减公式：decay = e^(-λ × hours)
-     */
-    private static final double LAMBDA = Math.log(2) / 48.0;
+    private static final double LAMBDA = Math.log(2) / 24.0;
 
-    /**
-     * 用户行为权重配置
-     * 权重越高表示该行为对推荐分数的影响越大
-     * 总权重 = 1.0，确保各维度贡献度的相对平衡
-     */
-    private static final double VIEW_WEIGHT = 0.08;
-    private static final double LIKE_WEIGHT = 0.12;
-    private static final double COLLECT_WEIGHT = 0.15;
-    private static final double SHARE_WEIGHT = 0.15;
+    // ========== 行为权重 ==========
+    private static final double VIEW_WEIGHT = 0.10;
+    private static final double LIKE_WEIGHT = 0.20;
+    private static final double COLLECT_WEIGHT = 0.25;
+    private static final double SHARE_WEIGHT = 0.20;
     private static final double DOWNLOAD_WEIGHT = 0.25;
-    private static final double COMMENT_WEIGHT = 0.25;   // 评论权重：预留功能
+    private static final double COMMENT_WEIGHT = 0.00; // 评论权重，预留
+
+    // ========== 核心参数 ==========
+    private static final double BEHAVIOR_EXPONENT = 0.7;        // 行为变换指数
+
+    // 新，中生，老图平滑系数
+    private static final double SMOOTH_ALPHA_NEW = 0.8;
+    private static final double SMOOTH_ALPHA_MODERATE = 0.5;
+    private static final double SMOOTH_ALPHA_OLD = 0.2;
+
+    // 最大变化设限
+    private static final double MAX_CHANGE_NEW = 15.0;
+    private static final double MAX_CHANGE_MODERATE = 8.0;
+    private static final double MAX_CHANGE_OLD = 5.0;
 
     /**
-     * 计算单张图片的推荐分数（含平滑机制）
-     *
-     * @param picture 待计算的图片对象，包含各种统计数据
-     * @param oldScore 图片的旧分数，用于平滑处理和涨幅限制
-     * @return 计算后的推荐分数，范围[0, +∞)，实际上限受涨幅限制约束
+     * 计算单张图片的推荐分数
      */
     public double calculateRecommendScore(Picture picture, double oldScore) {
         if (picture == null) {
-            log.warn("图片对象为空，返回默认分数");
             return 0.0;
         }
+        
+        // 检查图片是否已被删除，已删除的图片不再计算推荐分数
+        if (picture.getIsDelete() != null && picture.getIsDelete() == 1) {
+            log.debug("图片{}已被删除，跳过推荐分数计算", picture.getId());
+            return 0.0;
+        }
+
         try {
-            // 获取当前时间
             Date now = TimeUtils.getCurrentBeijingTime();
-            // 计算图片发布至今的小时数
             long hoursSincePublish = picture.getCreateTime() == null ? 0 :
                     (now.getTime() - picture.getCreateTime().getTime()) / (60 * 60 * 1000);
 
-            // ========== 1. 行为加权分计算 ==========
-            // 使用对数函数log1p来平滑数据，避免某个指标过大导致分数失衡
-            // log1p(x) = log(1+x)，当x=0时返回0，避免log(0)的数学错误
-            double behaviorScore =
-                    VIEW_WEIGHT * log1p(picture.getViewCount())
-                            + LIKE_WEIGHT * log1p(picture.getLikeCount())
-                            + COLLECT_WEIGHT * log1p(picture.getCollectCount())
-                            + SHARE_WEIGHT * log1p(picture.getShareCount())
-                            + DOWNLOAD_WEIGHT * log1p(picture.getDownloadCount())
-                            + COMMENT_WEIGHT * log1p(0L); // 评论贡献分（功能预留，当前为0）
+            // 1. 行为加权分
+            double behaviorScore = 0.0;
 
-            // ========== 2. 时间衰减因子计算 ==========
-            // 使用指数衰减函数，确保新内容获得更多曝光机会
-            // Math.max(0, hoursSincePublish) 确保时间值非负
-            double decay = Math.exp(-LAMBDA * Math.max(0, hoursSincePublish));
+            behaviorScore += VIEW_WEIGHT * transform(picture.getViewCount());
+            behaviorScore += LIKE_WEIGHT * transform(picture.getLikeCount());
+            behaviorScore += COLLECT_WEIGHT * transform(picture.getCollectCount());
+            behaviorScore += SHARE_WEIGHT * transform(picture.getShareCount());
+            behaviorScore += DOWNLOAD_WEIGHT * transform(picture.getDownloadCount());
+            behaviorScore += COMMENT_WEIGHT;
 
-            // ========== 3. 质量调节因子计算 ==========
-            // 基础质量因子为1.0，根据图片的各种属性进行调节
+            // 2. 时间衰减因子（>72小时=1.0）
+            double decay;
+            if (hoursSincePublish <= 72) {
+                decay = Math.exp(-LAMBDA * Math.max(0, hoursSincePublish));
+                boolean hasRecentEngagement = picture.getEditTime() != null &&
+                        (now.getTime() - picture.getEditTime().getTime()) / (60 * 60 * 1000) <= 24;
+                if (!hasRecentEngagement && hoursSincePublish > 24) {
+                    decay *= 0.5;
+                }
+            } else {
+                decay = 1.0; // 老图彻底摆脱时间惩罚
+            }
+
+            // 3. 质量调节因子
             double qualityFactor = 1.0;
 
-            // 3.1 审核状态加成
             if (picture.getReviewStatus() != null && picture.getReviewStatus() == 1) {
                 qualityFactor *= 1.2;
             }
 
-            // 3.2 图片分辨率加成
             if (picture.getPicWidth() != null && picture.getPicHeight() != null) {
                 long pixels = (long) picture.getPicWidth() * picture.getPicHeight();
-                if (pixels >= 1920 * 1080) {      // 1080p及以上，10%加成
+                if (pixels >= 1920 * 1080) {
                     qualityFactor *= 1.1;
-                } else if (pixels >= 1280 * 720) { // 720p及以上，5%加成
+                } else if (pixels >= 1280 * 720) {
                     qualityFactor *= 1.05;
                 }
             }
 
-            // 3.3 文件大小适中加成
             if (picture.getPicSize() != null) {
                 long sizeMB = picture.getPicSize() / (1024 * 1024);
                 if (sizeMB >= 1 && sizeMB <= 10) {
-                    qualityFactor *= 1.05; // 5%加成
+                    qualityFactor *= 1.05;
                 }
             }
 
-            // 限制质量因子的最大值，防止过度加成
             qualityFactor = Math.min(qualityFactor, 2.0);
 
-            // ========== 4. 老图加速衰减机制 ==========
-            // 检查最近24小时内是否有用户互动（通过editTime判断）
-            boolean hasRecentEngagement = picture.getEditTime() != null &&
-                    (now.getTime() - picture.getEditTime().getTime()) / (60 * 60 * 1000) <= 24;
-
-            // 如果图片发布超过24小时且最近没有互动，加速其衰减
-            // 这样可以让不受欢迎的老内容更快地退出推荐池
-            if (!hasRecentEngagement && hoursSincePublish > 24) {
-                decay *= 0.5; // 衰减速度加倍
-            }
-
-            // ========== 5. 智能冷启动机制 ==========
-            // 为新发布的图片提供初始曝光机会，避免"马太效应"
+            // 4. 冷启动加成
             double coldStartBoost = 0.0;
-
-            if (hoursSincePublish < 168) { // 只对7天内的图片提供冷启动支持
-                if (hoursSincePublish < 48) {
-                    // 前48小时：无条件扶持期
-                    // 扶持力度随时间线性递减，从50分递减到约35分
-                    coldStartBoost = ((168.0 - hoursSincePublish) / 168.0) * 50.0;
+            if (hoursSincePublish < 72) {
+                if (hoursSincePublish < 24) {
+                    coldStartBoost = ((72.0 - hoursSincePublish) / 72.0) * 50.0;
                 } else {
-                    // 48-168小时：条件扶持期
-                    // 只有获得早期用户认可（有互动）的图片才继续获得扶持
                     boolean hasEarlyEngagement = (picture.getLikeCount() > 0 ||
                             picture.getCollectCount() > 0 ||
                             picture.getDownloadCount() > 0 ||
                             picture.getShareCount() > 0);
-
                     if (hasEarlyEngagement) {
-                        // 扶持力度降低到30分起，继续线性递减
-                        coldStartBoost = ((168.0 - hoursSincePublish) / 168.0) * 30.0;
+                        coldStartBoost = ((72.0 - hoursSincePublish) / 72.0) * 30.0;
                     }
                 }
             }
 
-            // ========== 6. 计算原始得分 ==========
-            // 综合所有因素计算原始推荐分数
+            // 5. 原始得分
             double rawScore = behaviorScore * decay * qualityFactor + coldStartBoost;
 
-            // ========== 7. 动态涨幅限制机制 ==========
-            // 防止分数突然暴涨导致排序剧烈变化，保证用户体验的稳定性
-            double maxIncrease;
-            if (hoursSincePublish < 24) {
-                maxIncrease = 10.0;  // 新图片（24小时内）：允许快速上升，最多涨10分
-            } else if (hoursSincePublish < 168) {
-                maxIncrease = 5.0;   // 较新图片（7天内）：允许适度上升，最多涨5分
-            } else {
-                maxIncrease = 2.0;   // 老图片（7天后）：限制上升速度，最多涨2分
-            }
+            // 6. 平滑处理
+            double alpha = hoursSincePublish < 24 ? SMOOTH_ALPHA_NEW :
+                    hoursSincePublish < 72 ? SMOOTH_ALPHA_MODERATE : SMOOTH_ALPHA_OLD;
 
-            // 应用涨幅限制：如果新分数高于旧分数，则限制涨幅；否则允许自由下降
-            double finalScore = rawScore > oldScore ?
-                    Math.min(oldScore + maxIncrease, rawScore) :  // 上涨时限制涨幅
-                    rawScore;                                      // 下降时不限制
+            double smoothedScore = alpha * rawScore + (1 - alpha) * oldScore;
 
-            // 确保最终分数非负
-            finalScore = Math.max(0.0, finalScore);
+            // 7. 涨跌幅限制
+            double maxChange = hoursSincePublish < 24 ? MAX_CHANGE_NEW :
+                    hoursSincePublish < 72 ? MAX_CHANGE_MODERATE : MAX_CHANGE_OLD;
 
-            // 记录详细的计算日志，便于调试和优化
-            log.debug("图片{}推荐分数计算: 行为分={}, 衰减={}, 质量因子={}, 冷启动={}, 最终分数={}",
-                    picture.getId(), behaviorScore, decay, qualityFactor, coldStartBoost, finalScore);
+            double finalScore = Math.max(0.0,
+                    Math.min(oldScore + maxChange,
+                            Math.max(oldScore - maxChange, smoothedScore)));
+
+            // ========== 8. 日志记录 ==========
+            log.debug("图片{}推荐分数计算完成 | 行为分={:.2f} | 衰减={:.3f} | 质量因子={:.2f} | 冷启动={:.2f} | 原始分={:.2f} | 平滑分={:.2f} | 最终分={:.2f}",
+                    picture.getId(), behaviorScore, decay, qualityFactor, coldStartBoost, rawScore, smoothedScore, finalScore);
 
             return finalScore;
 
         } catch (Exception e) {
-            // 异常处理：记录错误日志并返回旧分数，保证系统稳定性
-            log.error("计算图片{}推荐分数失败: {}", picture.getId(), e.getMessage(), e);
+            log.error("计算图片{}推荐分数失败，返回旧分数。错误: {}", picture.getId(), e.getMessage(), e);
             return oldScore;
         }
     }
 
-    /**
-     * 安全的对数计算方法
-     *
-     * 使用log1p函数计算log(1+x)，相比直接使用log(x+1)有以下优势：
-     * 1. 当x接近0时，计算精度更高
-     * 2. 当x=0时，直接返回0，避免log(1)的计算
-     * 3. 处理null和负数情况，确保计算安全
-     *
-     * @param value 待计算的数值，通常是各种计数（浏览数、点赞数等）
-     * @return log(1+value)的结果，如果value无效则返回0
-     */
-    private double log1p(Long value) {
-        // 处理无效输入：null或非正数都返回0
-        if (value == null || value <= 0) return 0.0;
-        // 使用Math.log1p计算，比log(1+x)更精确
-        return Math.log1p(value);
+    private double transform(Long value) {
+        return (value == null || value <= 0) ? 0.0 : Math.pow(value, BEHAVIOR_EXPONENT);
     }
 }

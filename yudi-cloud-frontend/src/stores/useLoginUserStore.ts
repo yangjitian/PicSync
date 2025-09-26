@@ -1,6 +1,6 @@
 import { ref } from 'vue'
 import { defineStore } from 'pinia'
-import { getLoginUserUsingGet } from '@/api/userController.ts'
+import { getLoginUserUsingGet, getUserVoByIdUsingGet } from '@/api/userController.ts'
 
 /**
  * 存储登录用户信息的状态
@@ -17,6 +17,23 @@ export const useLoginUserStore = defineStore('loginUser', () => {
     const res = await getLoginUserUsingGet()
     if (res.data.code === 0 && res.data.data) {
       loginUser.value = res.data.data
+      // 进一步拉取完整的用户信息（包含 VIP 相关字段）
+      if (loginUser.value?.id) {
+        try {
+          const detailRes = await getUserVoByIdUsingGet({ id: loginUser.value.id })
+          if (detailRes.data.code === 0 && detailRes.data.data) {
+            // 合并关键字段到登录用户信息中
+            loginUser.value = {
+              ...loginUser.value,
+              userRole: detailRes.data.data.userRole ?? loginUser.value.userRole,
+              vipNumber: detailRes.data.data.vipNumber,
+              vipExpireTime: detailRes.data.data.vipExpireTime,
+            }
+          }
+        } catch (e) {
+          // 忽略错误，保持基础登录信息
+        }
+      }
     }
   }
 

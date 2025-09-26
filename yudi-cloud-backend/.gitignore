@@ -1,6 +1,7 @@
 ### Custom ###
 application-local.yml
 
+推荐算法优化说明.md
 HELP.md
 target/
 !.mvn/wrapper/maven-wrapper.jar

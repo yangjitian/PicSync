@@ -10,6 +10,7 @@ import cn.hutool.crypto.digest.BCrypt;
 import cn.hutool.json.JSONArray;
 import cn.hutool.json.JSONUtil;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.yudi.cloud.contstant.UserConstant;
@@ -23,18 +24,25 @@ import com.yudi.cloud.model.dto.user.ChangePasswordDTO;
 import com.yudi.cloud.model.dto.user.UserQueryDTO;
 import com.yudi.cloud.model.dto.user.UserUpdateDTO;
 import com.yudi.cloud.model.dto.user.VipCode;
+import com.yudi.cloud.model.entity.Space;
 import com.yudi.cloud.model.entity.User;
+import com.yudi.cloud.model.enums.SpaceLevelEnum;
 import com.yudi.cloud.model.enums.UserRoleEnum;
 import com.yudi.cloud.model.vo.user.UserLoginVO;
 import com.yudi.cloud.model.vo.user.UserVO;
 import com.yudi.cloud.utils.TimeUtils;
+import com.yudi.cloud.service.SpaceService;
 import com.yudi.cloud.service.UserService;
 import com.yudi.cloud.mapper.UserMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.BeanUtils;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.core.io.ResourceLoader;
 import org.springframework.stereotype.Service;
+
+import java.util.List;
+import java.util.stream.Collectors;
 import org.springframework.util.DigestUtils;
 
 import javax.annotation.Resource;
@@ -64,6 +72,10 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User>
 
     @Resource
     private StringRedisTemplate stringRedisTemplate;
+
+    @Lazy
+    @Resource
+    private SpaceService spaceService;
 
     private static final String VERIFICATION_CODE_PREFIX = "verification:code:";
 
@@ -511,6 +523,48 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User>
         boolean updated = this.updateById(updateUser);
         if (!updated) {
             throw new BusinessException(ErrorCode.OPERATION_ERROR, "开通会员失败，操作数据库失败");
+        }
+        
+        // 升级用户的所有空间为专业版
+        upgradeUserSpacesToProfessional(user.getId());
+    }
+    
+    /**
+     * 升级用户的所有空间为专业版
+     */
+    private void upgradeUserSpacesToProfessional(Long userId) {
+        try {
+            // 查询用户的所有空间
+            List<Space> userSpaces = spaceService.lambdaQuery()
+                    .eq(Space::getUserId, userId)
+                    .eq(Space::getIsDelete, 0)
+                    .list();
+            
+            if (userSpaces.isEmpty()) {
+                return; // 用户没有空间，无需升级
+            }
+            
+            // 批量更新空间级别为专业版
+            List<Long> spaceIds = userSpaces.stream()
+                    .map(Space::getId)
+                    .collect(Collectors.toList());
+            
+            // 使用批量更新
+            UpdateWrapper<Space> updateWrapper = new UpdateWrapper<>();
+            updateWrapper.in("id", spaceIds)
+                    .set("spaceLevel", SpaceLevelEnum.PROFESSIONAL.getValue())
+                    .set("maxSize", SpaceLevelEnum.PROFESSIONAL.getMaxSize())
+                    .set("maxCount", SpaceLevelEnum.PROFESSIONAL.getMaxCount());
+            
+            boolean updateResult = spaceService.update(updateWrapper);
+            if (!updateResult) {
+                log.warn("升级用户空间为专业版失败，用户ID: {}", userId);
+            } else {
+                log.info("成功升级用户空间为专业版，用户ID: {}, 空间数量: {}", userId, spaceIds.size());
+            }
+        } catch (Exception e) {
+            log.error("升级用户空间为专业版时发生异常，用户ID: {}", userId, e);
+            // 不抛出异常，避免影响VIP兑换流程
         }
     }
 

@@ -21,7 +21,11 @@
     <div v-if="picture" class="edit-bar">
       <a-space size="middle">
         <a-button :icon="h(EditOutlined)" @click="doEditPicture">编辑图片</a-button>
-        <a-button type="primary" :icon="h(FullscreenOutlined)" @click="doImagePainting">
+        <a-button 
+          type="primary" 
+          :icon="h(FullscreenOutlined)" 
+          @click="doImagePainting"
+        >
           AI 扩图
         </a-button>
       </a-space>
@@ -101,9 +105,11 @@ import { EditOutlined, FullscreenOutlined } from '@ant-design/icons-vue'
 import ImageOutPainting from '@/components/ImageOutPainting.vue'
 import { getSpaceVoByIdUsingGet } from '@/api/spaceController.ts'
 import { notifyPictureUploaded } from '@/utils/crossPageCommunication'
+import { useLoginUserStore } from '@/stores/useLoginUserStore.ts'
 
 const router = useRouter()
 const route = useRoute()
+const loginUserStore = useLoginUserStore()
 
 const picture = ref<API.PictureVO>()
 const pictureForm = reactive<API.PictureEditRequest>({})
@@ -111,6 +117,29 @@ const uploadType = ref<'file' | 'url'>('file')
 // 空间 id
 const spaceId = computed(() => {
   return route.query?.spaceId
+})
+
+// 检查用户是否可以使用AI扩图功能
+const canUseAiOutpainting = computed(() => {
+  const user = loginUserStore.loginUser
+  if (!user) return false
+  
+  // 管理员可以使用
+  if (user.userRole === 'admin') return true
+  
+  // VIP用户可以使用
+  if (user.userRole === 'vip') {
+    // 检查VIP是否过期
+    if (user.vipExpireTime) {
+      try {
+        return new Date(user.vipExpireTime) > new Date()
+      } catch (error) {
+        return false
+      }
+    }
+  }
+  
+  return false
 })
 
 /**
@@ -230,8 +259,29 @@ const onCropSuccess = (newPicture: API.PictureVO) => {
 // ----- AI 扩图引用 -----
 const imageOutPaintingRef = ref()
 
-// 打开 AI 扩图弹窗
+// 打开 AI 扩图弹窗（权限校验：所有人可见，VIP/管理员可用，普通用户点击提示）
 const doImagePainting = async () => {
+  const user = loginUserStore.loginUser
+  if (!canUseAiOutpainting.value) {
+    if (!user || !user.id) {
+      message.warning('请先登录后再使用 AI 扩图')
+      return
+    }
+    // 普通用户或 VIP 过期提示
+    if (user.userRole === 'vip') {
+      try {
+        if (!user.vipExpireTime || new Date(user.vipExpireTime) <= new Date()) {
+          message.warning('VIP 已过期，AI 扩图仅对有效 VIP 或管理员开放')
+          return
+        }
+      } catch (e) {
+        message.warning('VIP 状态异常，AI 扩图仅对有效 VIP 或管理员开放')
+        return
+      }
+    }
+    message.warning('AI 扩图仅对 VIP 用户或管理员开放')
+    return
+  }
   imageOutPaintingRef.value?.openModal()
 }
 

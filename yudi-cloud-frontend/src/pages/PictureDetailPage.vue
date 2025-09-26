@@ -111,11 +111,11 @@
             <div class="details-list">
               <div class="detail-item">
                 <span class="label">分类:</span>
-                <span class="value">{{ picture.category || '默认' }}</span>
+                <span class="value value-badge value-badge--category">{{ picture.category || '默认' }}</span>
               </div>
               <div class="detail-item">
                 <span class="label">格式:</span>
-                <span class="value">{{ picture.picFormat || '-' }}</span>
+                <span class="value value-badge value-badge--format">{{ picture.picFormat || '-' }}</span>
               </div>
               <div class="detail-item">
                 <span class="label">尺寸:</span>
@@ -137,10 +137,10 @@
             <h3>管理操作</h3>
             <div class="action-buttons">
               <button v-if="canEdit" class="btn btn-outline" @click="doEdit">
-                编辑
+                <EditOutlined /> 编辑
               </button>
               <button v-if="canDelete" class="btn btn-danger" @click="doDelete">
-                删除
+                <DeleteOutlined /> 删除
               </button>
             </div>
           </div>
@@ -829,19 +829,25 @@ const setupCrossPageListeners = () => {
 }
 
 .follow-btn {
-  background-color: transparent;
-  border: 1px solid var(--primary-color);
-  color: var(--primary-color);
+  background: linear-gradient(180deg, #bfe7d6 0%, #9fdcc0 100%);
+  border: 1px solid #86efac;
+  color: #065f46;
   padding: 8px 16px;
-  border-radius: 20px;
+  border-radius: 999px;
   cursor: pointer;
   font-weight: 600;
-  transition: all 0.2s ease;
+  transition: box-shadow 0.2s ease, transform 0.05s ease, background-color 0.2s ease;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.6) inset, 0 1px 2px rgba(0,0,0,0.04);
 }
 
 .follow-btn:hover {
-  background-color: var(--primary-color);
-  color: var(--white-color);
+  background: linear-gradient(180deg, #9fdcc0 0%, #86d3b1 100%);
+  color: #064e3b;
+  box-shadow: 0 2px 6px rgba(15, 23, 42, 0.08);
+}
+
+.follow-btn:active {
+  transform: translateY(1px);
 }
 
 /* 操作按钮 */
@@ -902,22 +908,23 @@ const setupCrossPageListeners = () => {
 
 .btn-outline {
   background-color: transparent;
-  border: 1px solid var(--primary-color);
-  color: var(--primary-color);
+  border: 1px solid #c9d2dc;
+  color: #334155;
 }
 
 .btn-outline:hover {
-  background-color: var(--primary-color);
-  color: var(--white-color);
+  background-color: #eef2f7;
+  color: #0f172a;
 }
 
 .btn-danger {
-  background-color: #ff4d4f;
-  color: var(--white-color);
+  background-color: #fee2e2;
+  color: #991b1b;
 }
 
 .btn-danger:hover {
-  background-color: #ff7875;
+  background-color: #fecaca;
+  color: #7f1d1d;
 }
 
 /* 点赞和收藏按钮特殊样式 */
@@ -1044,18 +1051,19 @@ const setupCrossPageListeners = () => {
 
 .tags .tag {
   display: inline-block;
-  background-color: var(--tag-bg-color);
+  background-color: #e2e8f0; /* deeper gray-blue */
+  border: 1px solid #cbd5e1;
   padding: 6px 12px;
   border-radius: 16px;
   font-size: 0.9em;
   cursor: pointer;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
   transition: all 0.2s ease;
-  border: 1px solid rgba(0, 0, 0, 0.05);
+  color: #3b82f6;
 }
 
 .tags .tag:hover {
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+  background-color: #cbd5e1; /* deeper on hover */
+  color: #2563eb;
   transform: translateY(-1px);
 }
 
@@ -1089,6 +1097,49 @@ const setupCrossPageListeners = () => {
 
 .detail-item .value {
   color: var(--text-secondary-color);
+}
+
+.value-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border: 1px solid #c4b5fd; /* deeper purple border */
+  border-radius: 8px;
+  background-color: #ede9fe; /* deeper purple bg */
+  color: #6d28d9; /* deeper purple text */
+}
+
+/* 提升优先级，避免被 .detail-item .value 覆盖 */
+.detail-item .value.value-badge {
+  background-color: #ede9fe; /* match deeper base */
+  border: 1px solid #c4b5fd;
+  color: #6d28d9;
+}
+
+.detail-item .value.value-badge:hover {
+  background-color: #ddd6fe; /* even deeper */
+  color: #5b21b6;
+}
+
+/* 分类（绿色系） */
+.detail-item .value.value-badge.value-badge--category {
+  background-color: #dcfce7; /* deeper */
+  border: 1px solid #86efac;
+  color: #15803d;
+}
+.detail-item .value.value-badge.value-badge--category:hover {
+  background-color: #bbf7d0; /* even deeper */
+  color: #166534;
+}
+
+/* 格式（橙色系） */
+.detail-item .value.value-badge.value-badge--format {
+  background-color: #ffedd5; /* deeper */
+  border: 1px solid #fdba74;
+  color: #c2410c;
+}
+.detail-item .value.value-badge.value-badge--format:hover {
+  background-color: #fed7aa; /* even deeper */
+  color: #9a3412;
 }
 
 /* 管理操作 */
