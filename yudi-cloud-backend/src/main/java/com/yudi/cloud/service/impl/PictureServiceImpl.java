@@ -1371,8 +1371,16 @@ public class PictureServiceImpl extends ServiceImpl<PictureMapper, Picture>
                 return new Page<>(current, size);
             }
 
-            // 2. 应用筛选条件
-            List<Picture> filteredPictures = pictures.stream()
+            // 2. 保持推荐算法的排序顺序
+            Map<Long, Picture> pictureMap = pictures.stream()
+                    .collect(Collectors.toMap(Picture::getId, Function.identity()));
+            List<Picture> orderedPictures = pictureIds.stream()
+                    .map(pictureMap::get)
+                    .filter(Objects::nonNull)
+                    .collect(Collectors.toList());
+
+            // 3. 应用筛选条件
+            List<Picture> filteredPictures = orderedPictures.stream()
                     .filter(picture -> {
                         // 分类筛选
                         if (StrUtil.isNotBlank(pictureQueryDTO.getCategory())) {
@@ -1387,7 +1395,6 @@ public class PictureServiceImpl extends ServiceImpl<PictureMapper, Picture>
                             String pictureName = picture.getName() != null ? picture.getName().toLowerCase() : "";
                             String pictureIntro = picture.getIntroduction() != null ? picture.getIntroduction().toLowerCase() : "";
 
-                            // 如果图片名称或简介包含搜索文本，则保留
                             if (!pictureName.contains(searchText) && !pictureIntro.contains(searchText)) {
                                 return false;
                             }
@@ -1402,40 +1409,27 @@ public class PictureServiceImpl extends ServiceImpl<PictureMapper, Picture>
                 return new Page<>(current, size);
             }
 
-            // 3. 批量转换为VO（优化：避免N+1查询）
-            List<PictureVO> pictureVOs = convertPicturesToVOs(filteredPictures, request);
-
-            // 4. 保持推荐算法的排序顺序，同时去重
-            Map<Long, PictureVO> pictureVOMap = pictureVOs.stream()
-                    .collect(Collectors.toMap(PictureVO::getId, Function.identity()));
-
-            // 使用LinkedHashSet保持顺序并去重
-            Set<Long> seenIds = new LinkedHashSet<>();
-            List<PictureVO> orderedPictureVOs = pictureIds.stream()
-                    .filter(seenIds::add) // 去重：只有第一次出现的ID才会被添加
-                    .map(pictureVOMap::get)
-                    .filter(Objects::nonNull)
-                    .collect(Collectors.toList());
-
-            // 5. 计算分页
-            long total = orderedPictureVOs.size();
+            // 4. 内存分页
+            long total = filteredPictures.size();
             long start = (current - 1) * size;
             long end = Math.min(start + size, total);
 
-            List<PictureVO> pageRecords;
+            List<Picture> pagePictures;
             if (start >= total) {
-                pageRecords = Collections.emptyList();
+                pagePictures = Collections.emptyList();
             } else {
-                pageRecords = orderedPictureVOs.subList((int) start, (int) end);
+                pagePictures = filteredPictures.subList((int) start, (int) end);
             }
 
-            // 6. 构造分页结果
-            Page<PictureVO> result = new Page<>(current, size);
-            result.setRecords(pageRecords);
-            result.setTotal(total); // 总数是筛选后的数量
+            // 5. 批量转换为VO（仅转换当前页的）
+            List<PictureVO> pageRecords = convertPicturesToVOs(pagePictures, request);
 
-            log.info("根据ID列表获取图片VO成功（支持搜索和筛选）: 请求{}个ID，筛选后{}张图片，分页返回{}张，搜索条件: '{}'",
-                    pictureIds.size(), total, pageRecords.size(), pictureQueryDTO.getSearchText());
+            // 6. 构造分页结果
+            Page<PictureVO> result = new Page<>(current, size, total);
+            result.setRecords(pageRecords);
+
+            log.info("根据ID列表获取图片VO成功（支持搜索和筛选）: 请求{}个ID，排序后{}张，筛选后{}张，分页返回{}张",
+                    pictureIds.size(), orderedPictures.size(), total, pageRecords.size());
             return result;
 
         } catch (Exception e) {

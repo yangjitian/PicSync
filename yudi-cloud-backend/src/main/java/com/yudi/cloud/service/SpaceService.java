@@ -10,6 +10,7 @@ import com.yudi.cloud.model.entity.User;
 import com.yudi.cloud.model.vo.space.SpaceVO;
 
 import javax.servlet.http.HttpServletRequest;
+import java.util.Set;
 
 /**
  * @author yudi
@@ -57,13 +58,13 @@ public interface SpaceService extends IService<Space> {
      * 查询分装类（分页）
      *
      * @param spacePage
+     * @param request
      * @return
      */
-    Page<SpaceVO> getSpaceVOPage(Page<Space> spacePage,HttpServletRequest request);
+    Page<SpaceVO> getSpaceVOPage(Page<Space> spacePage, HttpServletRequest request);
 
     /**
-     * 校验空间存在性和用户权限
-     *
+     * 校验空间权限
      * @param spaceId
      * @param request
      * @return

@@ -289,7 +289,6 @@ const handleLike = async () => {
         message.success(picture.value.liked ? '已点赞' : '已取消点赞')
         
         // 通知其他页面更新点赞状态
-        notifyPictureLiked(picture.value.id, result.liked)
         notifyPictureUpdated(picture.value.id, {
           liked: result.liked,
           likeCount: result.likeCount
@@ -340,7 +339,6 @@ const handleCollect = async () => {
         message.success(picture.value.collected ? '已收藏' : '已取消收藏')
         
         // 通知其他页面更新收藏状态
-        notifyPictureCollected(picture.value.id, result.collected)
         notifyPictureUpdated(picture.value.id, {
           collected: result.collected,
           collectCount: result.collectCount

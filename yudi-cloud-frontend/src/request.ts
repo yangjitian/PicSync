@@ -14,11 +14,6 @@ const myAxios = axios.create({
 // 全局请求拦截器
 myAxios.interceptors.request.use(
   function (config) {
-    // 从localStorage获取Sa-Token并添加到请求头
-    const satoken = localStorage.getItem('satoken');
-    if (satoken) {
-      config.headers['satoken'] = satoken;
-    }
     return config
   },
   function (error) {
@@ -32,18 +27,10 @@ myAxios.interceptors.response.use(
   function (response) {
     const { data } = response
     
-    // 保存Sa-Token到localStorage
-    const satoken = response.headers['satoken'];
-    if (satoken) {
-      localStorage.setItem('satoken', satoken);
-    }
-    
     // 处理业务错误
     if (data.code !== 0) {
       // 未登录
       if (data.code === 40100) {
-        // 清除无效的token
-        localStorage.removeItem('satoken');
         // 不是获取用户信息的请求，并且用户目前不是已经在用户登录或注册页面，则跳转到登录页面
         // 但是主页相关的请求不触发跳转，允许未登录用户访问
         if (

@@ -83,7 +83,7 @@ import PictureList from '@/components/PictureList.vue'
 import PictureListSkeleton from '@/components/PictureListSkeleton.vue'
 import { cacheStrategies, initCacheCleanup, sessionCache, localCache } from '@/utils/cache'
 import { performanceMonitor, getLoadingStrategy, debounce, throttle } from '@/utils/performance'
-import { onPictureDeleted, onPictureUploaded, onPictureLiked, onPictureCollected, onPictureUpdated, crossPageComm } from '@/utils/crossPageCommunication'
+import { onPictureDeleted, onPictureUploaded, onPictureUpdated, crossPageComm } from '@/utils/crossPageCommunication'
 
 const route = useRoute()
 const loginUserStore = useLoginUserStore()
@@ -610,8 +610,6 @@ onMounted(() => {
   onPictureUploaded(handlePictureUploaded)
   
   // 监听图片状态变化事件
-  onPictureLiked(handlePictureLiked)
-  onPictureCollected(handlePictureCollected)
   onPictureUpdated(handlePictureUpdated)
 })
 
@@ -685,66 +683,37 @@ const handlePictureDeleted = (event: any) => {
   })
 }
 
-// 处理图片点赞事件
-const handlePictureLiked = (event: any) => {
-  const { pictureId, data } = event
-  console.log('收到图片点赞事件:', pictureId, data)
-  
-  // 更新列表中的图片数据
-  const picture = dataList.value.find(p => p.id === pictureId)
-  if (picture && data?.liked !== undefined) {
-    (picture as any).liked = data.liked
-    // 同时更新点赞数量
-    if (data.likeCount !== undefined) {
-      picture.likeCount = data.likeCount
-    }
-    console.log('已更新图片点赞状态:', pictureId, data.liked, '点赞数:', data.likeCount)
-  }
-}
-
-// 处理图片收藏事件
-const handlePictureCollected = (event: any) => {
-  const { pictureId, data } = event
-  console.log('收到图片收藏事件:', pictureId, data)
-  
-  // 更新列表中的图片数据
-  const picture = dataList.value.find(p => p.id === pictureId)
-  if (picture && data?.collected !== undefined) {
-    (picture as any).collected = data.collected
-    // 同时更新收藏数量
-    if (data.collectCount !== undefined) {
-      picture.collectCount = data.collectCount
-    }
-    console.log('已更新图片收藏状态:', pictureId, data.collected, '收藏数:', data.collectCount)
-  }
-}
-
 // 处理图片更新事件
 const handlePictureUpdated = (event: any) => {
-  const { pictureId, data } = event
-  console.log('收到图片更新事件:', pictureId, data)
-  
-  // 更新列表中的图片数据
-  const picture = dataList.value.find(p => p.id === pictureId)
-  if (picture && data) {
-    if (data.liked !== undefined) {
-      (picture as any).liked = data.liked
-    }
-    if (data.collected !== undefined) {
-      (picture as any).collected = data.collected
-    }
-    if (data.likeCount !== undefined) {
-      picture.likeCount = data.likeCount
-    }
-    if (data.collectCount !== undefined) {
-      picture.collectCount = data.collectCount
-    }
-    if (data.shareCount !== undefined) {
-      picture.shareCount = data.shareCount
-    }
-    console.log('已更新图片数据:', pictureId, data)
+  const { pictureId, data } = event;
+  console.log('收到图片更新事件:', pictureId, data);
+
+  // 1. 更新当前视图中的数据 (确保响应式)
+  const pictureIndex = dataList.value.findIndex(p => p.id === pictureId);
+  if (pictureIndex > -1) {
+    const originalPicture = dataList.value[pictureIndex];
+    dataList.value[pictureIndex] = { ...originalPicture, ...data };
+    console.log('已更新内存中的图片数据:', pictureId, data);
   }
-}
+
+  // 2. 更新会话缓存中的数据，防止页面刷新后状态丢失
+  try {
+    const cachedData = cacheStrategies.recommendPictures.get(selectedCategory.value);
+    if (cachedData) {
+      const cachedIndex = cachedData.findIndex(p => p.id === pictureId);
+      if (cachedIndex > -1) {
+        // 更新缓存中的对象
+        const originalCachedPicture = cachedData[cachedIndex];
+        cachedData[cachedIndex] = { ...originalCachedPicture, ...data };
+        // 将更新后的数组存回缓存
+        cacheStrategies.recommendPictures.set(cachedData, selectedCategory.value);
+        console.log('已同步更新SessionStorage中的缓存数据');
+      }
+    }
+  } catch (e) {
+    console.error('更新缓存失败:', e);
+  }
+};
 
 
 // --- 处理来自子窗口的消息 ---

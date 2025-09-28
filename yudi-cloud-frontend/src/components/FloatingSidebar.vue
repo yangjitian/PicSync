@@ -53,12 +53,14 @@ import {
   PictureOutlined,
   FileTextOutlined,
   HeartOutlined,
-  StarOutlined
+  StarOutlined,
+  HomeOutlined
 } from '@ant-design/icons-vue'
 import { useRouter } from 'vue-router'
 import { useLoginUserStore } from '@/stores/useLoginUserStore.ts'
 import { SPACE_TYPE_ENUM } from '@/constants/space.ts'
 import { listMyTeamSpaceUsingPost } from '@/api/spaceUserController.ts'
+import { listSpaceVoByPageUsingPost } from '@/api/spaceController.ts'
 import { message } from 'ant-design-vue'
 
 const loginUserStore = useLoginUserStore()
@@ -77,11 +79,6 @@ const fixedMenuItems = [
     label: '公共图库',
   },
   {
-    key: '/my_space',
-    label: '我的空间',
-    icon: () => h(UserOutlined),
-  },
-  {
     key: '/published_list',
     label: '我的发布',
     icon: () => h(FileTextOutlined),
@@ -97,94 +94,108 @@ const fixedMenuItems = [
     icon: () => h(StarOutlined),
   },
   {
+    key: '/my_space',
+    label: '我的空间',
+    icon: () => h(UserOutlined),
+  },
+  {
     key: '/add_space?type=' + SPACE_TYPE_ENUM.TEAM,
     label: '创建团队',
     icon: () => h(TeamOutlined),
   },
 ]
 
+const privateSpace = ref<API.SpaceVO | null>(null);
 const teamSpaceList = ref<API.SpaceUserVO[]>([])
 const menuItems = computed(() => {
-  
-  // 如果用户没有团队空间，则只展示固定菜单（包含"创建团队"）
+  // 动态生成 "我的空间" 菜单
+  const mySpaceMenu = privateSpace.value
+    ? {
+        key: 'my_space_submenu', // 使用唯一key
+        label: '我的空间',
+        icon: () => h(HomeOutlined),
+        children: [
+          {
+            key: `/space/${privateSpace.value.id}`,
+            label: privateSpace.value.spaceName,
+          },
+        ],
+      }
+    : {
+        key: '/add_space?type=' + SPACE_TYPE_ENUM.PRIVATE,
+        label: '创建私有空间',
+        icon: () => h(HomeOutlined),
+      };
+
+  // 替换固定的 "我的空间" 项
+  const newFixedMenuItems = fixedMenuItems.map(item => item.key === '/my_space' ? mySpaceMenu : item);
+
+  // 如果用户没有团队空间，则只展示修改后的固定菜单
   if (teamSpaceList.value.length < 1) {
-    return fixedMenuItems
+    return newFixedMenuItems;
   }
-  
-  // 如果用户有团队空间，则展示固定菜单和团队空间菜单
-  // 分离我创建的团队空间和我加入的团队空间
+
+  // --- 以下为团队空间的原有逻辑，保持不变 ---
   const createdSpaces = teamSpaceList.value.filter(spaceUser => 
     spaceUser.space?.userId === loginUserStore.loginUser.id
-  )
+  );
   const joinedSpaces = teamSpaceList.value.filter(spaceUser => 
     spaceUser.space?.userId !== loginUserStore.loginUser.id
-  )
+  );
   
+  const teamSpaceMenus = [];
   
-  // 构建团队空间菜单
-  const teamSpaceMenus = []
-  
-  // 我创建的团队空间子菜单 - 始终显示
   const createdSubMenus = createdSpaces.length > 0 
-    ? createdSpaces.map((spaceUser) => {
-        const space = spaceUser.space
-        return {
-          key: '/space/' + spaceUser.spaceId,
-          label: space?.spaceName,
-        }
-      })
+    ? createdSpaces.map((spaceUser) => ({
+        key: '/space/' + spaceUser.spaceId,
+        label: spaceUser.space?.spaceName,
+      }))
     : [{
         key: 'empty-created-spaces',
         label: '暂无创建的团队空间',
         disabled: true,
         style: { color: '#999', fontStyle: 'italic' }
-      }]
+      }];
   
   teamSpaceMenus.push({
     key: 'my-created-spaces',
     label: '我创建的团队空间',
     icon: () => h(PlusOutlined),
     children: createdSubMenus,
-  })
-  
-  // 我加入的团队空间子菜单 - 始终显示
+  });
+
   const joinedSubMenus = joinedSpaces.length > 0 
-    ? joinedSpaces.map((spaceUser) => {
-        const space = spaceUser.space
-        return {
-          key: '/space/' + spaceUser.spaceId,
-          label: space?.spaceName,
-        }
-      })
+    ? joinedSpaces.map((spaceUser) => ({
+        key: '/space/' + spaceUser.spaceId,
+        label: spaceUser.space?.spaceName,
+      }))
     : [{
         key: 'empty-joined-spaces',
         label: '暂无加入的团队空间',
         disabled: true,
         style: { color: '#999', fontStyle: 'italic' }
-      }]
-  
+      }];
+
   teamSpaceMenus.push({
     key: 'my-joined-spaces',
     label: '我加入的团队空间',
     icon: () => h(UsergroupAddOutlined),
     children: joinedSubMenus,
-  })
-  
-  // 始终创建团队空间一级菜单
+  });
+
   const teamSpaceMenuGroup = {
     key: 'teamSpace',
     label: '团队空间',
     icon: () => h(TeamOutlined),
     children: teamSpaceMenus,
-  }
-  
-  // 移除固定菜单中的"创建团队"，因为现在有团队空间了
-  const filteredFixedMenus = fixedMenuItems.filter(item => 
+  };
+
+  const filteredFixedMenus = newFixedMenuItems.filter(item => 
     !item.key.includes('/add_space?type=')
-  )
+  );
   
-  return [...filteredFixedMenus, teamSpaceMenuGroup]
-})
+  return [...filteredFixedMenus, teamSpaceMenuGroup];
+});
 
 // 展开侧边栏
 const expandSidebar = () => {
@@ -220,6 +231,20 @@ const collapseSidebar = () => {
   }, 300)
 }
 
+// 加载私有空间
+const fetchPrivateSpace = async () => {
+  const res = await listSpaceVoByPageUsingPost({
+    userId: loginUserStore.loginUser.id,
+    spaceType: SPACE_TYPE_ENUM.PRIVATE,
+    pageSize: 1,
+  });
+  if (res.data.code === 0 && res.data.data?.records) {
+    privateSpace.value = res.data.data.records[0] || null;
+  } else {
+    message.error('加载私有空间失败，' + res.data.message);
+  }
+};
+
 // 加载团队空间列表
 const fetchTeamSpaceList = async () => {
   const res = await listMyTeamSpaceUsingPost()
@@ -236,6 +261,7 @@ const fetchTeamSpaceList = async () => {
 watchEffect(() => {
   // 登录才加载
   if (loginUserStore.loginUser.id) {
+    fetchPrivateSpace();
     fetchTeamSpaceList()
   }
 })

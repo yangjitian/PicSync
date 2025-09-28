@@ -1,8 +1,10 @@
 <template>
   <div id="spaceDetailPage" :key="componentKey">
     <!-- 空间信息 -->
-    <a-flex justify="space-between">
-      <h2>{{ space.spaceName }}（{{ SPACE_TYPE_MAP[space.spaceType] }}）</h2>
+    <a-flex justify="space-between" align="center">
+      <a-space align="center">
+        <h2>{{ space.spaceName }}（{{ SPACE_TYPE_MAP[space.spaceType] }}）</h2>
+      </a-space>
       <a-space size="middle">
         <a-button
           v-if="canUploadPicture"
@@ -39,6 +41,7 @@
             :percent="((space.totalSize * 100) / space.maxSize).toFixed(1)"
           />
         </a-tooltip>
+        <a-tag :color="spaceLevelInfo.color">{{ spaceLevelInfo.name }}</a-tag>
       </a-space>
     </a-flex>
     <div style="margin-bottom: 16px" />
@@ -94,6 +97,7 @@ import 'vue3-colorpicker/style.css'
 import BatchEditPictureModal from '@/components/BatchEditPictureModal.vue'
 import { BarChartOutlined, EditOutlined, TeamOutlined } from '@ant-design/icons-vue'
 import { SPACE_PERMISSION_ENUM, SPACE_TYPE_MAP } from '../constants/space.ts'
+import { useLoginUserStore } from '@/stores/useLoginUserStore'
 
 interface Props {
   id: string | number
@@ -103,6 +107,31 @@ const props = defineProps<Props>()
 const router = useRouter()
 const route = useRoute()
 const space = ref<API.SpaceVO>({})
+const loginUserStore = useLoginUserStore()
+const loginUser = loginUserStore.loginUser
+
+const spaceLevelInfo = computed(() => {
+  let level = space.value.spaceLevel
+  // 如果是普通用户创建的个人空间，但是用户是 vip，那么空间等级提升一级
+  if (
+    loginUser.userRole !== 'admin' &&
+    loginUser.vipNumber > 0 &&
+    space.value.userId === loginUser.id &&
+    level === 0
+  ) {
+    level = 1
+  }
+  switch (level) {
+    case 0:
+      return { name: '普通版', color: 'gray' }
+    case 1:
+      return { name: '专业版', color: 'blue' }
+    case 2:
+      return { name: '旗舰版', color: 'gold' }
+    default:
+      return { name: '普通版', color: 'gray' }
+  }
+})
 
 // 添加一个强制重新渲染的 key，基于路由参数
 const componentKey = computed(() => {

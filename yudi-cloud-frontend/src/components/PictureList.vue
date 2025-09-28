@@ -24,7 +24,7 @@
           </div>
           
           <!-- 作者信息 -->
-          <div class="author-info" @click="handleAuthorClick(picture.userVO, $event)">
+          <div class="author-info">
             <a-space>
               <span class="author-label">作者：</span>
               <a-avatar :size="24" :src="picture.userVO?.userAvatar || getDefaultAvatar(picture.userVO?.userName || '')">
@@ -471,13 +471,6 @@ const getDefaultAvatar = (userName?: string) => {
       </text>
     </svg>
   `)}`
-}
-
-const handleAuthorClick = (user: API.UserVO | undefined, e: Event) => {
-  e.stopPropagation()
-  if (user?.id) {
-    router.push(`/user/${user.id}`)
-  }
 }
 
 // --- 图片显示逻辑 ---
@@ -1308,7 +1301,6 @@ const getShareCountDisplay = (picture: API.PictureVO) => {
 .author-info {
   padding: 8px 16px;
   border-bottom: 1px solid #f0f0f0;
-  cursor: pointer;
   transition: all 0.2s ease;
   border-radius: 4px;
   margin: 0 8px;
